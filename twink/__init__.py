@@ -96,6 +96,20 @@ def parse_hello(message):
 					versions.add(idx*32 + s)
 	return versions
 
+
+class Error(Exception):
+	pass
+
+
+class OpenflowError(Error):
+	def __init__(self, message):
+		vals = list(struct.unpack_from("!BBHIHH", message))
+		vals.append(binascii.b2a_hex(message[struct.calcsize("!BBHIHH"):]))
+		o = zip("version oftype length xid etype ecode payload".split(), vals)
+		super(OpenflowError, self).__init__("OFPT_ERROR %s" % repr(o))
+		self.message = message
+
+
 class Channel(object):
 	ctime = None
 	version = None # The negotiated openflow version
@@ -153,7 +167,7 @@ class LoggingChannel(Channel):
 		return super(LoggingChannel, self).close()
 
 
-class CallbackDeadError(Exception):
+class CallbackDeadError(Error):
 	pass
 
 
