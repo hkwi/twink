@@ -6,11 +6,7 @@ from gevent import spawn
 from gevent.event import Event, AsyncResult
 from gevent.queue import Queue
 from gevent.server import StreamServer, DatagramServer
-from gevent.socket import error
-try:
-	from errno import EBADF
-except ImportError:
-	EBADF = 9
+from gevent.socket import error, EBADF
 
 class StreamChannel(Channel):
 	socket = None
@@ -59,14 +55,15 @@ class DatagramChannel(Channel):
 class ServerHandler(object):
 	def __init__(self, *args, **kwargs):
 		self.accept_versions = ofp_version_normalize(kwargs.get("accept_versions", [1,]))
-		self.message_handler = kwargs.get("message_handler", default_message_handler)
+		self.message_handler = kwargs.get("message_handler", easy_message_handler)
 		self.channel_cls = kwargs.get("channel_cls", StreamChannel)
+		self.channel_opts = kwargs.get("channel_opts", {})
 
 
 class StreamHandler(ServerHandler):
 	def __call__(self, socket, address):
 		assert issubclass(self.channel_cls, StreamChannel)
-		channel = self.channel_cls(socket=socket)
+		channel = self.channel_cls(socket=socket, **self.channel_opts)
 		
 		channel.send(hello(self.accept_versions), self.message_handler)
 		
@@ -101,7 +98,7 @@ class OpenflowDatagramServer(DatagramServer, ServerHandler):
 		channel = self.channels.get(address)
 		if channel is None:
 			assert issubclass(self.channel_cls, DatagramChannel)
-			channel = self.channel_cls(server=self, address=address)
+			channel = self.channel_cls(server=self, address=address, **self.channel_opts)
 			self.channels[address] = channel
 			
 			channel.send(hello(self.accept_versions), self.message_handler)
@@ -151,9 +148,9 @@ class SyncContext(object):
 				self.results[xid].set_exception(OpenflowError(message))
 			else:
 				self.results[xid].set(message)
-		elif channel.callback:
+		if channel.callback:
 			try:
-				channel.callback(message, channel)
+				return channel.callback(message, channel)
 			except CallbackDeadError:
 				pass # This should not happen
 
@@ -287,7 +284,11 @@ class PortMonitorContext(object):
 			p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
 			self.update_port(p[0], p[1:])
 		
-		return channel.callback(message, channel)
+		if channel.callback:
+			try:
+				return channel.callback(message, channel)
+			except CallbackDeadError:
+				pass # This should not happen
 
 
 class PortMonitorChannel(ControllerChannel):
@@ -324,7 +325,7 @@ def serve_forever(*servers, **opts):
 if __name__=="__main__":
 	def message_handler(message, channel):
 		(version, oftype, message_len, xid) = parse_ofp_header(message)
-		ret = default_message_handler(message, channel)
+		ret = easy_message_handler(message, channel)
 		if oftype==0:
 			print "echo", binascii.b2a_hex(channel.echo())
 			print "feature", binascii.b2a_hex(channel.feature())
@@ -346,7 +347,7 @@ if __name__=="__main__":
 		accept_versions=[1],
 		message_handler=message_handler))
 	udpserv = OpenflowDatagramServer(address,
-		hannel_cls=type("DChannel", (DatagramChannel, PortMonitorChannel, SyncChannel, LoggingChannel), {}),
+		channel_cls=type("DChannel", (DatagramChannel, PortMonitorChannel, SyncChannel, LoggingChannel), {}),
 		accept_versions=[1],
 		message_handler=message_handler)
 	serve_forever(tcpserv, udpserv)

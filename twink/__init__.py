@@ -1,4 +1,5 @@
 import datetime
+import time
 import weakref
 import struct
 import types
@@ -118,7 +119,7 @@ class Channel(object):
 	accept_versions = None
 	
 	def __init__(self, *args, **kwargs):
-		self.ctime = datetime.datetime.now()
+		self.ctime = time.time()
 		self.accept_versions = ofp_version_normalize(kwargs.get("accept_versions"))
 	
 	@property
@@ -300,15 +301,6 @@ def default_message_handler(message, channel):
 	if oftype==2: # ECHO
 		channel.send(struct.pack("!BBHI", channel.version, 3, 8+length, xid)+message, None)
 		return True
-	elif oftype==10: # PACKET_IN
-		(buffer_id,) = struct.unpack_from("!I", message, offset=8)
-		# Some switch use PACKET_IN as ECHO_REQUEST, so responding to it with action "DROP"
-		if version==1:
-			msg = struct.pack("!IHH", buffer_id, 0xffff, 0) # OFPP_NONE=0xffff
-		else:
-			msg = struct.pack("!IIHHI", buffer_id, 0xffffffff, 0, 0, 0) # OFPP_CONTROLLER=0xffffffff
-		channel.send(struct.pack("!BBHI", version, 13, 8+len(msg), xid)+msg, None) # OFPT_PACKET_OUT=13
-		return True
 	elif oftype==0: # HELLO
 		hello_handler(message, channel)
 	elif oftype==6: # FEATURES_REPLY
@@ -317,3 +309,17 @@ def default_message_handler(message, channel):
 		else:
 			(channel.datapath,_1,_2,channel.auxiliary) = struct.unpack_from("!QIBB", message, offset=8)
 
+def easy_message_handler(message, channel):
+	if default_message_handler(message, channel):
+		return True
+	
+	(version, oftype, length, xid) = parse_ofp_header(message)
+	if oftype==10: # PACKET_IN
+		(buffer_id,) = struct.unpack_from("!I", message, offset=8)
+		# Some switch use PACKET_IN as ECHO_REQUEST, so responding to it with action "DROP"
+		if version==1:
+			msg = struct.pack("!IHH", buffer_id, 0xffff, 0) # OFPP_NONE=0xffff
+		else:
+			msg = struct.pack("!IIHHI", buffer_id, 0xffffffff, 0, 0, 0) # OFPP_CONTROLLER=0xffffffff
+		channel.send(struct.pack("!BBHI", version, 13, 8+len(msg), xid)+msg, None) # OFPT_PACKET_OUT=13
+		return True

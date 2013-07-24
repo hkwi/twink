@@ -143,7 +143,7 @@ if __name__=="__main__":
 		pass
 	
 	def message_handler(message, channel):
-		ret = default_message_handler(message, channel)
+		ret = easy_message_handler(message, channel)
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype==0:
 			print channel.ofctl("dump-flows")
