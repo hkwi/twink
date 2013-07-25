@@ -414,6 +414,25 @@ class UnixProxyChannel(Channel):
 			self._proxy.sync()
 
 
+class PingingChannel(Channel):
+	def __init__(self, *args, **kwargs):
+		super(PingingChannel, self).__init__(*args, **kwargs)
+		self._ping = Event()
+		spawn(self.ping)
+	
+	def ping(self):
+		while True:
+			self._ping.wait(timeout=20)
+			if self._ping.is_set():
+				break
+			else:
+				self.send(struct.pack("!BBHI", self.version, 2, 8, hms_xid()), None)
+
+	def close(self):
+		self._ping.set()
+		super(PingingChannel, self).close()
+
+
 def serve_forever(*servers, **opts):
 	for server in servers:
 		server.start()
@@ -446,13 +465,13 @@ if __name__=="__main__":
 	address = ("0.0.0.0", 6633)
 	tcpserv = StreamServer(address, handle=StreamHandler(
 		channel_cls=type("SChannel",
-			(StreamChannel, PortMonitorChannel, SyncChannel, UnixProxyChannel, LoggingChannel),
+			(StreamChannel, PortMonitorChannel, SyncChannel, PingingChannel, UnixProxyChannel, LoggingChannel),
 			{"accept_versions": [1, 4]}),
 		message_handler=message_handler),
 		spawn = pool)
 	udpserv = OpenflowDatagramServer(address,
 		channel_cls=type("DChannel",
-			(DatagramChannel, PortMonitorChannel, SyncChannel, UnixProxyChannel, LoggingChannel),
+			(DatagramChannel, PortMonitorChannel, SyncChannel, PingingChannel, UnixProxyChannel, LoggingChannel),
 			{"accept_versions": [1, 4]}),
 		message_handler=message_handler,
 		spawn = pool)
