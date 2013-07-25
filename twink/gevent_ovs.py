@@ -139,9 +139,6 @@ class OvsChannel(Channel):
 		return ret
 
 if __name__=="__main__":
-	class OvsTestChannel(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel):
-		pass
-	
 	def message_handler(message, channel):
 		ret = easy_message_handler(message, channel)
 		(version, oftype, length, xid) = parse_ofp_header(message)
@@ -151,7 +148,14 @@ if __name__=="__main__":
 	
 	logging.basicConfig(level=logging.DEBUG)
 	address = ("0.0.0.0", 6633)
-	appconf = {"channel_opts":{"accept_versions":[1]}, "channel_cls":OvsTestChannel, "message_handler":message_handler}
-	tcpserv = StreamServer(address, handle=StreamHandler(**appconf))
-	udpserv = OpenflowDatagramServer(address, **appconf)
+	tcpserv = StreamServer(address, handle=StreamHandler(
+		channel_cls = type("SChannel",
+			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 
+			{"accept_versions":[1]}),
+		message_handler = message_handler))
+	udpserv = OpenflowDatagramServer(address, 
+		channel_cls = type("DChannel",
+			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 
+			{"accept_versions":[1]}),
+		message_handler = message_handler)
 	serve_forever(tcpserv, udpserv)

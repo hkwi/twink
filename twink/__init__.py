@@ -67,8 +67,12 @@ def ofp_version_normalize(versions):
 
 def hello(versions, **kwargs):
 	xid = kwargs.get("xid", hms_xid())
-	vset = ofp_version_normalize(versions)
+	if versions:
+		vset = ofp_version_normalize(versions)
+	else:
+		vset = set((1,))
 	version = max(vset)
+	
 	if version < 4:
 		return struct.pack("!BBHI", version, 0, 8, xid)
 	else:
@@ -264,15 +268,15 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 		self.direct_send(message)
 	
 	def on_message(self, message):
-		if super(ControllerChannel, self).on_message(message):
-			return True
-		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype==6: # FEATURES_REPLY
 			if self.version < 4:
 				(self.datapath,) = struct.unpack_from("!Q", message, offset=8)
 			else:
 				(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8)
+		
+		if super(ControllerChannel, self).on_message(message):
+			return True
 		
 		if self.seq:
 			if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier

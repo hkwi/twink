@@ -124,13 +124,11 @@ if __name__ == "__main__":
 	address = ("0.0.0.0", 6633)
 	appconf = {"accept_versions":[1,]}
 	tcpserv = StreamServer(address, handle=StreamHandler(
-		channel_cls=type("SChannel", (StreamChannel, PortMonitorChannel, SyncChannel, ZkChannel, LoggingChannel), {}),
-		channel_opts={"zk_handler": zk_handler},
+		channel_cls=type("SChannel", (StreamChannel, PortMonitorChannel, SyncChannel, ZkChannel, LoggingChannel), {"zk_handler": zk_handler}),
 		accept_versions=[1],
 		message_handler=message_handler))
 	udpserv = OpenflowDatagramServer(address,
-		channel_cls=type("DChannel", (DatagramChannel, PortMonitorChannel, SyncChannel, ZkChannel, LoggingChannel), {}),
-		channel_opts={"zk_handler": zk_handler},
+		channel_cls=type("DChannel", (DatagramChannel, PortMonitorChannel, SyncChannel, ZkChannel, LoggingChannel), {"zk_handler": zk_handler}),
 		accept_versions=[1],
 		message_handler=message_handler)
 	serve_forever(tcpserv, udpserv)
