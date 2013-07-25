@@ -67,9 +67,11 @@ def ofp_version_normalize(versions):
 
 def hello(versions, **kwargs):
 	xid = kwargs.get("xid", hms_xid())
-	if versions:
-		vset = ofp_version_normalize(versions)
-		version = max(vset)
+	vset = ofp_version_normalize(versions)
+	version = max(vset)
+	if version < 4:
+		return struct.pack("!BBHI", version, 0, 8, xid)
+	else:
 		units = [0,]*(1 + version/32)
 		for v in vset:
 			units[v/32] |= 1<<(v%32)
@@ -78,15 +80,13 @@ def hello(versions, **kwargs):
 		fmt = "!BBHIHH%dI%dx" % (len(units), 8*((len(units)-1)%2))
 		return struct.pack(fmt, version, 0, struct.calcsize(fmt), xid, # HELLO
 			1, versionbitmap_length, *units) # VERSIONBITMAP
-	else:
-		return struct.pack("!BBHI", 1, 0, 8, xid)
 
 def parse_hello(message):
 	(version, oftype, length, xid) = parse_ofp_header(message)
 	assert oftype==0 # HELLO
 	versions = set()
 	if length == 8:
-		versions.add(1)
+		versions.add(version)
 	else:
 		(subtype, sublength) = struct.unpack_from("!HH", message, offset=8)
 		assert subtype == 1 # VERSIONBITMAP
@@ -114,8 +114,6 @@ class OpenflowError(Error):
 class Channel(object):
 	ctime = None
 	version = None # The negotiated openflow version
-	datapath = None
-	auxiliary = None
 	accept_versions = None
 	
 	def __init__(self, *args, **kwargs):
@@ -143,7 +141,15 @@ class Channel(object):
 		'''
 		Interface for inner connection side
 		'''
-		pass
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		if oftype==2: # ECHO
+			self.send(struct.pack("!BBHI", self.version, 3, 8+length, xid)+message, None)
+			return True
+		elif oftype==0: # HELLO
+			accept_versions = self.accept_versions
+			if not accept_versions:
+				accept_versions = set([1,])
+			self.version = max(parse_hello(message) & accept_versions)
 
 
 class LoggingChannel(Channel):
@@ -220,6 +226,9 @@ class Chunk(WeakCallbackCaller):
 
 
 class ControllerChannel(Channel, WeakCallbackCaller):
+	datapath = None
+	auxiliary = None
+	
 	def __init__(self, *args, **kwargs):
 		super(ControllerChannel, self).__init__(*args, **kwargs)
 		self.seq = []
@@ -255,9 +264,17 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 		self.direct_send(message)
 	
 	def on_message(self, message):
-		super(ControllerChannel, self).on_message(message)
+		if super(ControllerChannel, self).on_message(message):
+			return True
+		
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		if oftype==6: # FEATURES_REPLY
+			if self.version < 4:
+				(self.datapath,) = struct.unpack_from("!Q", message, offset=8)
+			else:
+				(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8)
+		
 		if self.seq:
-			(version, oftype, length, xid) = parse_ofp_header(message)
 			if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
 				chunk_drop = False
 				for e in self.seq:
@@ -289,30 +306,8 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 			return self.callback(message, self)
 		logging.warn("No callback found for handling message %s" % binascii.b2a_hex(message))
 
-def hello_handler(message, channel):
-	accept_versions = channel.accept_versions
-	if not accept_versions:
-		accept_versions = set([1,])
-	channel.version = max(parse_hello(message) & accept_versions)
-
-
-def default_message_handler(message, channel):
-	(version, oftype, length, xid) = parse_ofp_header(message)
-	if oftype==2: # ECHO
-		channel.send(struct.pack("!BBHI", channel.version, 3, 8+length, xid)+message, None)
-		return True
-	elif oftype==0: # HELLO
-		hello_handler(message, channel)
-	elif oftype==6: # FEATURES_REPLY
-		if channel.version < 4:
-			(channel.datapath,) = struct.unpack_from("!Q", message, offset=8)
-		else:
-			(channel.datapath,_1,_2,channel.auxiliary) = struct.unpack_from("!QIBB", message, offset=8)
 
 def easy_message_handler(message, channel):
-	if default_message_handler(message, channel):
-		return True
-	
 	(version, oftype, length, xid) = parse_ofp_header(message)
 	if oftype==10: # PACKET_IN
 		(buffer_id,) = struct.unpack_from("!I", message, offset=8)

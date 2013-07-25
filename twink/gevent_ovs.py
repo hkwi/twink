@@ -151,7 +151,7 @@ if __name__=="__main__":
 	
 	logging.basicConfig(level=logging.DEBUG)
 	address = ("0.0.0.0", 6633)
-	appconf = {"accept_versions":[1], "channel_cls":OvsTestChannel, "message_handler":message_handler}
+	appconf = {"channel_opts":{"accept_versions":[1]}, "channel_cls":OvsTestChannel, "message_handler":message_handler}
 	tcpserv = StreamServer(address, handle=StreamHandler(**appconf))
 	udpserv = OpenflowDatagramServer(address, **appconf)
 	serve_forever(tcpserv, udpserv)

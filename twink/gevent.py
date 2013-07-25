@@ -54,7 +54,6 @@ class DatagramChannel(Channel):
 
 class ServerHandler(object):
 	def __init__(self, *args, **kwargs):
-		self.accept_versions = ofp_version_normalize(kwargs.get("accept_versions", [1,]))
 		self.message_handler = kwargs.get("message_handler", easy_message_handler)
 		self.channel_cls = kwargs.get("channel_cls", StreamChannel)
 		self.channel_opts = kwargs.get("channel_opts", {})
@@ -65,7 +64,7 @@ class StreamHandler(ServerHandler):
 		assert issubclass(self.channel_cls, StreamChannel)
 		channel = self.channel_cls(socket=socket, **self.channel_opts)
 		
-		channel.send(hello(self.accept_versions), self.message_handler)
+		channel.send(hello(channel.accept_versions), self.message_handler)
 		
 		try:
 			while not socket.closed:
@@ -101,7 +100,7 @@ class OpenflowDatagramServer(DatagramServer, ServerHandler):
 			channel = self.channel_cls(server=self, address=address, **self.channel_opts)
 			self.channels[address] = channel
 			
-			channel.send(hello(self.accept_versions), self.message_handler)
+			channel.send(hello(channel.accept_versions), self.message_handler)
 		
 		fp = StringIO.StringIO(data)
 		try:
@@ -212,29 +211,30 @@ class SyncChannel(ControllerChannel):
 
 class PortMonitorContext(object):
 	def __init__(self):
-		self._ports = AsyncResult()
+		self.ports_init = Event()
+		self.ports = []
 		self.multi = {}
 	
-	def ports(self, channel):
-		if not self._ports.ready():
+	def get_ports(self, channel):
+		if not self.ports_init.is_set():
 			if channel.version == 4:
+				xid = hms_xid()
+				self.multi[xid] = []
 				channel.send(struct.pack("!BBHIHH4x", channel.version, 
 					18, # MULTIPART_REQUEST (v1.3)
-					16, # struct.calcsize(fmt)
-					hms_xid(), 
+					16, # struct.calcsize(fmt)==16
+					xid, 
 					13, # PORT_DESC
-					0, # not REQ_MORE
-					), self)
+					0, # no REQ_MORE
+					), None)
 			else:
-				channel.send(ofp_header_only(5, version=channel.version), self) # FEATURES_REQUEST
-		return self._ports.get()
+				channel.send(ofp_header_only(5, version=channel.version), None) # FEATURES_REQUEST
+			self.ports_init.wait()
+		return self.ports
 	
 	def update_port(self, reason, port):
-		if not self._ports.ready():
-			return
-		
-		hit = [x for x in self.ports if x[0]==port[0]]
-		ports = self._ports.get()
+		ports = self.ports
+		hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
 		if reason==0: # ADD
 			assert not hit
 			ports.append(port)
@@ -247,7 +247,7 @@ class PortMonitorContext(object):
 			ports.append(port)
 		else:
 			assert False, "unknown reason %d" % reason
-		self._ports.set(ports)
+		self.ports = ports
 	
 	def __call__(self, message, channel):
 		assert isinstance(channel, PortMonitorChannel)
@@ -257,9 +257,8 @@ class PortMonitorContext(object):
 			ofp_port = "!I4x6s2x16sIIIIIIII"
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
-		if oftype==19 and channel.version == 4: # MULTIPART_REPLY
-			if xid not in self.multi:
-				self.multi[xid] = []
+		if xid in self.multi and oftype==19: # MULTIPART_REPLY
+			assert channel.version == 4
 			(mptype, flags) = struct.unpack_from("!HH4x", message, offset=8)
 			if mptype==13:
 				ports = self.multi[xid]
@@ -269,7 +268,8 @@ class PortMonitorContext(object):
 					offset += struct.calcsize(ofp_port)
 				
 				if flags&1:
-					self._ports.set(self.multi[xid])
+					self.ports = ports
+					self.ports_init.set()
 					del(self.multi[xid])
 		elif oftype==6 and channel.version != 4: # FEATURES_REPLY
 			fmt = "!BBHIQIB3x"
@@ -279,16 +279,11 @@ class PortMonitorContext(object):
 			while offset < length:
 				ports.append(struct.unpack_from(ofp_port, message, offset=offset))
 				offset += struct.calcsize(ofp_port)
-			self._ports.set(ports)
+			self.ports = ports
+			self.ports_init.set()
 		elif oftype==12: # PORT_STATUS
 			p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
 			self.update_port(p[0], p[1:])
-		
-		if channel.callback:
-			try:
-				return channel.callback(message, channel)
-			except CallbackDeadError:
-				pass # This should not happen
 
 
 class PortMonitorChannel(ControllerChannel):
@@ -298,7 +293,7 @@ class PortMonitorChannel(ControllerChannel):
 	
 	@property
 	def ports(self):
-		return self._port_monitor.ports(self)
+		return self._port_monitor.get_ports(self)
 	
 	def port_index(self):
 		if self.version==1:
@@ -310,6 +305,13 @@ class PortMonitorChannel(ControllerChannel):
 				config state
 				curr advertised supported peer
 				curr_speed max_speed'''.split()
+	
+	def on_message(self, message):
+		'''
+		Interface for inner connection side
+		'''
+		self._port_monitor(message, self)
+		return super(PortMonitorChannel, self).on_message(message)
 
 
 def serve_forever(*servers, **opts):
@@ -341,13 +343,12 @@ if __name__=="__main__":
 	
 	logging.basicConfig(level=logging.DEBUG)
 	address = ("0.0.0.0", 6633)
-	appconf = {"accept_versions":[1,]}
 	tcpserv = StreamServer(address, handle=StreamHandler(
 		channel_cls=type("SChannel", (StreamChannel, PortMonitorChannel, SyncChannel, LoggingChannel), {}),
-		accept_versions=[1],
+		channel_opts = {"accept_versions": [1, 4]},
 		message_handler=message_handler))
 	udpserv = OpenflowDatagramServer(address,
 		channel_cls=type("DChannel", (DatagramChannel, PortMonitorChannel, SyncChannel, LoggingChannel), {}),
-		accept_versions=[1],
+		channel_opts = {"accept_versions": [1, 4]},
 		message_handler=message_handler)
 	serve_forever(tcpserv, udpserv)
