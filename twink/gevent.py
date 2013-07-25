@@ -264,10 +264,10 @@ class PortMonitorContext(object):
 				ports = self.multi[xid]
 				offset = 16
 				while offset < length:
-					ports.append(struct.unpack(message, ofp_port, offset=offset))
+					ports.append(struct.unpack_from(ofp_port, message, offset=offset))
 					offset += struct.calcsize(ofp_port)
 				
-				if flags&1:
+				if not flags&1:
 					self.ports = ports
 					self.ports_init.set()
 					del(self.multi[xid])
