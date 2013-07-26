@@ -17,6 +17,7 @@ class StreamChannel(Channel):
 	def __init__(self, *args, **kwargs):
 		# put the vars required for __repr__ before calling super()
 		self.socket = kwargs["socket"]
+		self.sockfamily = self.socket.family
 		self.sockinfo = self.socket.getsockname() + self.socket.getpeername()
 		super(StreamChannel, self).__init__(*args, **kwargs)
 	
@@ -32,9 +33,9 @@ class StreamChannel(Channel):
 		return self.socket.close()
 	
 	def __repr__(self):
-		if self.socket.family in (AF_INET, AF_INET6):
+		if self.sockfamily in (AF_INET, AF_INET6):
 			return "tcp %s:%d-%s:%d" % self.sockinfo
-		elif self.socket.family == AF_UNIX:
+		elif self.sockfamily == AF_UNIX:
 			return "unix %s-%x" % (self.unix_path, id(self))
 		else:
 			return repr(self.socket)
@@ -370,9 +371,11 @@ class UnixProxyContext(object):
 		return os.path.abspath(path)
 	
 	def sync(self):
-		old = self.socket_path("unknown-%x.sock" % id(self))
+		# PID is used to escape the conflict in case accidentally multiple connection was opened
+		# for the same datapath in different process
+		old = self.socket_path("unknown-%x.datapath" % os.getpid())
 		if self.parent.datapath:
-			new = self.socket_path("%x-%x.sock" % (self.parent.datapath, id(self)))
+			new = self.socket_path("%x-%x.datapath" % (self.parent.datapath, os.getpid()))
 			if self.proxy_path and self.proxy_path == old:
 				os.rename(old, new)
 				self.proxy_path = new

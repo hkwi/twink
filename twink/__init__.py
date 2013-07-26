@@ -19,7 +19,10 @@ def read_message(sized_read):
 	OFP_HEADER_LEN = 8
 	message = bytearray()
 	while len(message) < OFP_HEADER_LEN:
-		ext = sized_read(OFP_HEADER_LEN-len(message))
+		try:
+			ext = sized_read(OFP_HEADER_LEN-len(message))
+		except:
+			ext = ""
 		if len(ext) == 0:
 			break
 		message += ext
@@ -122,7 +125,6 @@ class Channel(object):
 	
 	def __init__(self, *args, **kwargs):
 		self.ctime = time.time()
-		self.accept_versions = ofp_version_normalize(kwargs.get("accept_versions"))
 	
 	@property
 	def closed(self):
@@ -150,10 +152,20 @@ class Channel(object):
 			self.send(struct.pack("!BBHI", self.version, 3, 8+length, xid)+message, None)
 			return True
 		elif oftype==0: # HELLO
-			accept_versions = self.accept_versions
+			accept_versions = ofp_version_normalize(self.accept_versions)
 			if not accept_versions:
 				accept_versions = set([1,])
-			self.version = max(parse_hello(message) & accept_versions)
+			cross_versions = parse_hello(message) & accept_versions
+			if cross_versions:
+				self.version = max(cross_versions)
+			else:
+				print accept_versions
+				ascii_txt = "Accept versions: %s" % ["- 1.0 1.1 1.2 1.3".split()[x] for x in list(accept_versions)]
+				self.send(struct.pack("!BBHIHH", max(accept_versions), 1,
+					struct.calcsize("!BBHIHH")+len(ascii_txt), hms_xid(),
+					0, 0) + ascii_txt, None)
+				self.close()
+				return True
 
 
 class LoggingChannel(Channel):
