@@ -159,7 +159,6 @@ class Channel(object):
 			if cross_versions:
 				self.version = max(cross_versions)
 			else:
-				print accept_versions
 				ascii_txt = "Accept versions: %s" % ["- 1.0 1.1 1.2 1.3".split()[x] for x in list(accept_versions)]
 				self.send(struct.pack("!BBHIHH", max(accept_versions), 1,
 					struct.calcsize("!BBHIHH")+len(ascii_txt), hms_xid(),
