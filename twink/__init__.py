@@ -149,7 +149,7 @@ class Channel(object):
 		'''
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype==2: # ECHO
-			self.send(struct.pack("!BBHI", self.version, 3, 8+length, xid)+message, None)
+			self.send(struct.pack("!BBHI", self.version, 3, length, xid)+message[8:], None)
 			return True
 		elif oftype==0: # HELLO
 			accept_versions = ofp_version_normalize(self.accept_versions)

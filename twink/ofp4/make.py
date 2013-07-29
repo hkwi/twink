@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 import struct
 import random
-from ofp4 import *
+from twink.ofp4 import *
 
 _len = len
 _type = type
@@ -30,7 +30,7 @@ def fix_ofp_header(type, message):
 	msg = _obj(message)
 	return msg[0]+_pack("BH", type, _len(msg))+msg[4:]
 
-
+# 7.1
 def ofp_header(version, type, length, xid):
 	if version is None:
 		version = 4
@@ -42,6 +42,13 @@ def ofp_header(version, type, length, xid):
 	return _pack("BBHI", version, type, length, xid)
 
 
+def ofp_(header, data):
+	header = _obj(header)
+	type = ord(header[1])
+	return fix_ofp_header(type, header+data)
+
+
+# 7.2.1
 def ofp_port(port_no, hw_addr, name, config, state, 
 		curr, advertised, supported, peer, curr_speed, max_speed):
 	assert isinstance(hw_addr, str) and _len(hw_addr)==6
@@ -64,6 +71,7 @@ def ofp_port(port_no, hw_addr, name, config, state,
 	return msg
 
 
+# 7.2.2
 def ofp_packet_queue(queue_id, port, len, properties):
 	if isinstance(properties, str):
 		pass
@@ -360,7 +368,7 @@ def ofp_action_experimenter(type, len, experimenter, data):
 	return _pack("HHI", type, len, experimenter) + data + '\0'*(len-filled_len)
 
 
-def ofp_switch_features(header, datapath_id, n_buffers, n_tables, auxiliary_id, capabilities, reserved):
+def ofp_switch_features(header, datapath_id, n_buffers, n_tables, auxiliary_id, capabilities):
 	if header is None:
 		header = ofp_header(4, OFPT_FEATURES_REPLY, 0, None)
 	msg = fix_ofp_header(5, _pack("8sQIBB2xII",
@@ -370,7 +378,7 @@ def ofp_switch_features(header, datapath_id, n_buffers, n_tables, auxiliary_id, 
 		n_tables,
 		auxiliary_id,
 		capabilities,
-		reserved))
+		0))
 	assert _len(msg) == 32
 	return msg
 
@@ -425,6 +433,9 @@ def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 
 # 7.3.4.2
 def ofp_group_mod(header, command, type, group_id, buckets):
+	if header is None:
+		header = ofp_header(4, OFPT_GROUP_MOD, 0, None)
+	
 	if isinstance(buckets, str):
 		pass
 	elif isinstance(buckets, (list, tuple)):
@@ -434,11 +445,10 @@ def ofp_group_mod(header, command, type, group_id, buckets):
 	else:
 		raise ValueError(buckets)
 	
-	msg = fix_ofp_header(15, _pack("8sHBBI",
+	msg = fix_ofp_header(15, _pack("8sHBxI",
 		_obj(header),
 		command,
 		type,
-		pad,
 		group_id)+buckets)
 	return msg
 
@@ -554,12 +564,28 @@ def ofp_meter_band_experimenter(type, len, rate, burst_size, experimenter, data)
 
 
 # 7.3.5
-def ofp_multipart_request(header, type, flags, body):
-	if type is None:
-		type = 18
-	assert type == 18
+def ofp_multipart_request(header, type, flags, body=None):
+	if header is None:
+		header = ofp_header(4, OFPT_MULTIPART_REQUEST, 0, None)
 	
-	msg = fix_ofp_header(18, _pack("8sHH4x",
+	if type in (OFPMP_DESC, OFPMP_TABLE, OFPMP_GROUP_DESC, 
+			OFPMP_GROUP_FEATURES, OFPMP_METER_FEATURES, OFPMP_PORT_DESC):
+		body = ""
+	elif type in (OFPMP_FLOW, OFPMP_AGGREGATE, OFPMP_PORT_STATS, 
+			OFPMP_QUEUE, OFPMP_GROUP, OFPMP_METER, OFPMP_METER_CONFIG):
+		if body is None:
+			body = ""
+		else:
+			body = _obj(body)
+	elif type == OFPMP_TABLE_FEATURES:
+		if isinstance(body, str):
+			pass
+		elif isinstance(body, (list, tuple)):
+			body = "".join([_obj(b) for b in body])
+		elif body is None:
+			body = []
+	
+	msg = fix_ofp_header(OFPT_MULTIPART_REQUEST, _pack("8sHH4x",
 		_obj(header),
 		type,
 		flags) + body)
@@ -567,13 +593,14 @@ def ofp_multipart_request(header, type, flags, body):
 
 
 def ofp_multipart_reply(header, type, flags, body):
-	if type is None:
-		type = 19
-	assert type == 19
+	if header is None:
+		header = ofp_header(4, OFPT_MULTIPART_REPLY, 0, None)
 	
+	if body is None:
+		body = ""
 	assert isinstance(body, str)
 	
-	msg = fix_ofp_header(19, _pack("8sHH4x",
+	msg = fix_ofp_header(OFPT_MULTIPART_REPLY, _pack("8sHH4x",
 		_obj(header),
 		type,
 		flags) + body)
@@ -597,6 +624,9 @@ def ofp_desc(mfr_desc, hw_desc, sw_desc, serial_num, dp_desc):
 ######################
 
 def ofp_hello(header, elements):
+	if header is None:
+		header = ofp_header(4, OFPT_HELLO, 0, None)
+	
 	if isinstance(elements, str):
 		pass
 	elif isinstance(elements, (tuple, list)):
@@ -629,13 +659,15 @@ def ofp_hello_elem_versionbitmap(type, length, bitmaps):
 	if isinstance(bitmaps, str):
 		pass
 	elif isinstance(bitmaps, (tuple, list)):
-		bitmaps = "".join([_int("I",e) for e in bitmaps])
+		bitmaps = "".join([_pack("I",e) for e in bitmaps])
 	elif bitmaps is None:
 		bitmaps = ""
 	else:
 		raise ValueError("%s" % bitmaps)
 	
-	return struct.pack("!HH", type, _align(4+_len(bitmaps)))+bitmaps
+	length = 4 + _len(bitmaps)
+	
+	return struct.pack("!HH", type, length) + bitmaps + '\0'*(_align(length)-length)
 
 
 def ofp_table_mod(header, table_id, config):
@@ -677,4 +709,7 @@ def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 		_obj(match)
 		]) + instructions)
 	return msg
+
+def ofp_group_stats_request(group_id):
+	return _pack("I4x", group_id)
 

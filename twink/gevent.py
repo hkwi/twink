@@ -137,8 +137,9 @@ class SyncContext(object):
 	def __init__(self):
 		self.results = {}
 	
-	def prepare(self):
-		xid = hms_xid()
+	def prepare(self, xid=None):
+		if xid is None:
+			xid = hms_xid()
 		self.results[xid] = result = AsyncResult()
 		return (xid, result)
 	
@@ -152,6 +153,10 @@ class SyncContext(object):
 			v.set_exception(error(EBADF, "connection closed"))
 		self.results = {}
 	
+	def release(self, xid):
+		self.results[xid].set(None)
+		del(self.results[xid])
+	
 	def __call__(self, message, channel):
 		assert isinstance(channel, SyncChannel)
 		(version, oftype, message_len, xid) = parse_ofp_header(message)
@@ -160,11 +165,7 @@ class SyncContext(object):
 				self.results[xid].set_exception(OpenflowError(message))
 			else:
 				self.results[xid].set(message)
-		if channel.callback:
-			try:
-				return channel.callback(message, channel)
-			except CallbackDeadError:
-				pass # This should not happen
+			del(self.results[xid])
 
 
 class SyncChannel(ControllerChannel):
@@ -217,9 +218,28 @@ class SyncChannel(ControllerChannel):
 			raise NotImplemented("openflow version compatibility")
 		return self._sync.simple_request(self, 26) # OFPT_GET_ASYNC_REQUEST=26 (v1.3)
 	
+	def single(self, message):
+		return self.multi([message,]).pop()
+	
+	def multi(self, messages):
+		prepared = []
+		for message in messages:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			prepared.append(self._sync.prepare(xid=xid))
+			self.send(message, self._sync)
+		self.barrier()
+		for (xid, result) in prepared:
+			if not result.ready():
+				self._sync.release(xid)
+		return [result.get() for (xid, result) in prepared]
+	
 	def close(self):
 		super(SyncChannel, self).close()
 		self._sync.close()
+	
+	def on_message(self, message):
+		self._sync(message, self)
+		return super(SyncChannel, self).on_message(message)
 
 
 class PortMonitorContext(object):
@@ -249,14 +269,19 @@ class PortMonitorContext(object):
 		ports = self.ports
 		hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
 		if reason==0: # ADD
-			assert not hit
+			if self.ports_init.is_set():
+				assert not hit
 			ports.append(port)
 		elif reason==1: # DELETE
-			assert hit
-			ports.remove(hit[0])
+			if self.ports_init.is_set():
+				assert hit
+			if hit:
+				ports.remove(hit)
 		elif reason==2: # MODIFY
-			assert hit
-			ports.remove(hit[0])
+			if self.ports_init.is_set():
+				assert hit
+			if hit:
+				ports.remove(hit)
 			ports.append(port)
 		else:
 			assert False, "unknown reason %d" % reason
