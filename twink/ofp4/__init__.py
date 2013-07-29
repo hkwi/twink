@@ -16,6 +16,12 @@ class _enum_base(object):
 		else:
 			raise ValueError(self.values)
 		
+		ret += self.items_bitshifts()
+		
+		return ret
+	
+	def items_bitshifts(self):
+		ret = []
 		if self.bitshifts is None:
 			pass
 		elif isinstance(self.bitshifts, str):
@@ -32,31 +38,42 @@ class _enum_base(object):
 		
 		return ret
 	
-	def __iter__(self):
-		return self.items().values().__iter__()
-	
 	def __init__(self):
 		module_scope = globals()
 		for k,v in self.items():
 			module_scope[self.prefix+"_"+k] = v
+	
+	def name(self, value):
+		for k,v in self.items():
+			if v == value:
+				return self.prefix+"_"+k
+	
+	def bitnames(self, value):
+		ret = []
+		for k,v in self.items_bitshifts():
+			if k.endswith("_MASK"):
+				continue
+			if value & v:
+				ret.append(self.prefix+"_"+k)
+		return ret
 
 # 6.4 and 7.3.4.1
-type("ofp_flow_mod_command", (_enum_base,), {
+ofp_flow_mod_command = type("ofp_flow_mod_command", (_enum_base,), {
 	"prefix": "OFPFC",
 	"values": "ADD MODIFY MODIFY_STRICT DELETE DELETE_STRICT"
 	})()
 
-type("ofp_group_mod_command", (_enum_base,), {
+ofp_group_mod_command = type("ofp_group_mod_command", (_enum_base,), {
 	"prefix": "OFPGC",
 	"values": "ADD MODIFY DELETE"
 	})()
 
-type("ofp_meter_mod_command", (_enum_base,), {
+ofp_meter_mod_command = type("ofp_meter_mod_command", (_enum_base,), {
 	"prefix": "OFPMC",
 	"values": "ADD MODIFY DELETE"
 	})()
 
-type("ofp_type", (_enum_base,), {
+ofp_type = type("ofp_type", (_enum_base,), {
 	"prefix": "OFPT",
 	"values": '''HELLO ERROR ECHO_REQUEST ECHO_REPLY EXPERIMENTER
 		FEATURES_REQUEST FEATURES_REPLY GET_CONFIG_REQUEST GET_CONFIG_REPLY SET_CONFIG
@@ -70,18 +87,18 @@ type("ofp_type", (_enum_base,), {
 		METER_MOD'''
 	})()
 
-type("ofp_port_config", (_enum_base,), {
+ofp_port_config = type("ofp_port_config", (_enum_base,), {
 	# XXX There're two definitions, each in 7.2.1 and A.6.8
 	"prefix": "OFPPC",
 	"bitshifts": "PORT_DOWN NO_STP NO_RECV NO_RECV_STP FLOOD FWD PACKET_IN"
 	})()
 
-type("ofp_port_state", (_enum_base,), {
+ofp_port_state = type("ofp_port_state", (_enum_base,), {
 	"prefix": "OFPPS",
 	"bitshifts": "LINK_DOWN BLOCKED LIVE"
 	})()
 
-type("ofp_port_no", (_enum_base,), {
+ofp_port_no = type("ofp_port_no", (_enum_base,), {
 	"prefix": "OFPP",
 	"values": {
 		"MAX":        0xffffff00,
@@ -95,14 +112,14 @@ type("ofp_port_no", (_enum_base,), {
 		"ANY":        0xffffffff }
 	})()
 
-type("ofp_port_features", (_enum_base,), {
+ofp_port_features = type("ofp_port_features", (_enum_base,), {
 	"prefix": "OFPPF",
 	"bitshifts": '''10MB_HD 10MB_FD 100MB_HD 100MB_FD 1GB_HD 1GB_FD
 		10GB_FD 40GB_FD 100GB_FD 1TB_FD OTHER
 		COPPER FIBER AUTONEG PAUSE PAUSE_ANY'''
 	})()
 
-type("ofp_queue_properties", (_enum_base,), {
+ofp_queue_properties = type("ofp_queue_properties", (_enum_base,), {
 	"prefix": "OFPQT",
 	"values": {
 		"MIN_RATE": 1,
@@ -110,12 +127,12 @@ type("ofp_queue_properties", (_enum_base,), {
 		"EXPERIMENTER": 0xffff }
 	})()
 
-type("ofp_match_type", (_enum_base,), {
+ofp_match_type = type("ofp_match_type", (_enum_base,), {
 	"prefix": "OFPMT",
 	"values": "STANDARD OXM"
 	})()
 
-type("ofp_oxm_class", (_enum_base,), {
+ofp_oxm_class = type("ofp_oxm_class", (_enum_base,), {
 	"prefix": "OFPXMC",
 	"values": {
 		"NXM_0":          0x0000,
@@ -124,7 +141,7 @@ type("ofp_oxm_class", (_enum_base,), {
 		"EXPERIMENTER":   0xFFFF }
 	})()
 
-type("ofp_match_fields", (_enum_base,), {
+ofp_match_fields = type("ofp_match_fields", (_enum_base,), {
 	"prefix": "OFPXMT_OFB",
 	"values": '''IN_PORT IN_PHY_PORT METADATA
 		ETH_DST ETH_SRC ETH_TYPE VLAN_VID VLAN_PCP
@@ -139,19 +156,19 @@ type("ofp_match_fields", (_enum_base,), {
 		PBB_ISID TUNNEL_ID IPV6_EXTHDR'''
 	})()
 
-type("ofp_vlan_id", (_enum_base,), {
+ofp_vlan_id = type("ofp_vlan_id", (_enum_base,), {
 	"prefix": "OFPVID",
 	"values": {
 		"PRESENT": 0x1000,
 		"NONE":    0x0000 }
 	})()
 
-type("ofp_ipv6exthdr_flags", (_enum_base,), {
+ofp_ipv6exthdr_flags = type("ofp_ipv6exthdr_flags", (_enum_base,), {
 	"prefix": "OFPIEH",
 	"bitshifts":"NONEXT ESP AUTH DEST FRAG ROUTER HOP UNREP UNSEQ"
 	})()
 
-type("ofp_instruction_type", (_enum_base,), {
+ofp_instruction_type = type("ofp_instruction_type", (_enum_base,), {
 	"prefix": "OFPIT",
 	"values": {
 		'''GOTO_TABLE
@@ -163,7 +180,7 @@ type("ofp_instruction_type", (_enum_base,), {
 		"EXPERIMENTER":   0xFFFF}
 	})()
 
-type("ofp_action_type", (_enum_base,), {
+ofp_action_type = type("ofp_action_type", (_enum_base,), {
 	"prefix": "OFPAT",
 	"values": {
 		"OUTPUT": 0,
@@ -174,14 +191,14 @@ type("ofp_action_type", (_enum_base,), {
 		"EXPERIMENTER": 0xffff}
 	})()
 
-type("ofp_controller_max_len", (_enum_base,), {
+ofp_controller_max_len = type("ofp_controller_max_len", (_enum_base,), {
 	"prefix": "OFPCML",
 	"values": {
 		"MAX":       0xffe5,
 		"NO_BUFFER": 0xffff}
 	})()
 
-type("ofp_capabilities", (_enum_base,), {
+ofp_capabilities = type("ofp_capabilities", (_enum_base,), {
 	"prefix": "OFPC",
 	"bitshifts": {
 		'''FLOW_STATS
@@ -193,40 +210,40 @@ type("ofp_capabilities", (_enum_base,), {
 		"PORT_BLOCKED": 8 }
 	})()
 
-type("ofp_config_flags", (_enum_base,), {
+ofp_config_flags = type("ofp_config_flags", (_enum_base,), {
 	"prefix": "OFPC_FRAG",
 	"values": "NORMAL DROP REASM MASK"
 	})()
 
-type("ofp_table", (_enum_base,), {
+ofp_table = type("ofp_table", (_enum_base,), {
 	"prefix": "OFPIT",
 	"values": {
 		"MAX": 0xfe,
 		"ALL": 0xff }
 	})()
 
-type("ofp_table_config", (_enum_base,), {
+ofp_table_config = type("ofp_table_config", (_enum_base,), {
 	"prefix": "OFPTC",
 	"values": {
 		"DEPRECATED_MASK": 3 }
 	})()
 
-type("ofp_flow_mod_flags", (_enum_base,), {
+ofp_flow_mod_flags = type("ofp_flow_mod_flags", (_enum_base,), {
 	"prefix": "OFPFF",
 	"bitshifts":"SEND_FLOW_REM CHECK_OVERLAP RESET_COUNTS NO_PKT_COUNTS BYT_COUNTS"
 	})()
 
-type("ofp_group_mod_command", (_enum_base,), {
+ofp_group_mod_command = type("ofp_group_mod_command", (_enum_base,), {
 	"prefix": "OFPGC",
 	"values": "ADD MODIFY DELETE"
 	})()
 
-type("ofp_group_type", (_enum_base,), {
+ofp_group_type = type("ofp_group_type", (_enum_base,), {
 	"prefix": "OFPGT",
 	"values": "ALL SELECT INDIRECT FF"
 	})()
 
-type("ofp_group", (_enum_base,), {
+ofp_group = type("ofp_group", (_enum_base,), {
 	"prefix": "OFPG",
 	"values": {
 		"MAX": 0xffffff00,
@@ -234,7 +251,7 @@ type("ofp_group", (_enum_base,), {
 		"ANY": 0xffffffff }
 	})()
 
-type("ofp_meter", (_enum_base,), {
+ofp_meter = type("ofp_meter", (_enum_base,), {
 	"prefix": "OFPM",
 	"values": {
 		"MAX":        0xffff0000,
@@ -243,17 +260,17 @@ type("ofp_meter", (_enum_base,), {
 		"ALL":        0xffffffff }
 	})()
 
-type("ofp_meter_mod_command", (_enum_base,), {
+ofp_meter_mod_command = type("ofp_meter_mod_command", (_enum_base,), {
 	"prefix": "OFPMC",
 	"values": "ADD MODIFY DELETE"
 	})()
 
-type("ofp_meter_flags", (_enum_base,), {
+ofp_meter_flags = type("ofp_meter_flags", (_enum_base,), {
 	"prefix": "OFPMF",
 	"bitshifts":"KBPS PKTPS BURST STATS"
 	})()
 
-type("ofp_meter_band_type", (_enum_base,), {
+ofp_meter_band_type = type("ofp_meter_band_type", (_enum_base,), {
 	"prefix": "OFPMBT",
 	"values": {
 		"DROP": 1,
@@ -261,17 +278,17 @@ type("ofp_meter_band_type", (_enum_base,), {
 		"EXPERIMENTER": 0xFFFF }
 	})()
 
-type("ofp_multipart_request_flags", (_enum_base,), {
+ofp_multipart_request_flags = type("ofp_multipart_request_flags", (_enum_base,), {
 	"prefix": "OFPMPF",
 	"values": { "REQ_MORE": 1 }
 	})()
 
-type("ofp_multipart_reply_flags", (_enum_base,), {
+ofp_multipart_reply_flags = type("ofp_multipart_reply_flags", (_enum_base,), {
 	"prefix": "OFPMPF",
 	"values": { "REPLY_MORE": 1 }
 	})()
 
-type("ofp_multipart_type", (_enum_base,), {
+ofp_multipart_type = type("ofp_multipart_type", (_enum_base,), {
 	"prefix": "OFPMP",
 	"values": {
 		'''DESC FLOW AGGREGATE TABLE PORT_STATS QUEUE
@@ -281,7 +298,7 @@ type("ofp_multipart_type", (_enum_base,), {
 		"EXPERIMENTER": 0xffff}
 	})()
 
-type("ofp_table_feature_prop_type", (_enum_base,), {
+ofp_table_feature_prop_type = type("ofp_table_feature_prop_type", (_enum_base,), {
 	"prefix": "OFPTFPT",
 	"values": {
 		'''INSTRUCTIONS INSTRUCTIONS_MISS
@@ -295,32 +312,32 @@ type("ofp_table_feature_prop_type", (_enum_base,), {
 		"EXPERIMENTER EXPERIMENTER_MISS": 0xFFFE }
 	})()
 
-type("ofp_group_capabilities", (_enum_base,), {
+ofp_group_capabilities = type("ofp_group_capabilities", (_enum_base,), {
 	"prefix": "OFPGFC",
 	"bitshifts":"SELECT_WEIGHT SELECT_LIVENESS CHAINING CHAINING_CHECKS"
 	})()
 
-type("ofp_controller_role", (_enum_base,), {
+ofp_controller_role = type("ofp_controller_role", (_enum_base,), {
 	"prefix": "OFPCR_ROLE",
 	"values": "NOCHANGE EQUAL MASTER SLAVE"
 	})()
 
-type("ofp_packet_in_reason", (_enum_base,), {
+ofp_packet_in_reason = type("ofp_packet_in_reason", (_enum_base,), {
 	"prefix": "OFPR",
 	"values": "NO_MATCH ACTION INVALID_TTL"
 	})()
 
-type("ofp_flow_removed_reason", (_enum_base,), {
+ofp_flow_removed_reason = type("ofp_flow_removed_reason", (_enum_base,), {
 	"prefix": "OFPRR",
 	"values": "IDLE_TIMEOUT HARD_TIMEOUT DELETE GROUP_DELETE"
 	})()
 
-type("ofp_port_reason", (_enum_base,), {
+ofp_port_reason = type("ofp_port_reason", (_enum_base,), {
 	"prefix": "OFPPR",
 	"values": "ADD DELETE MODIFY"
 	})()
 
-type("ofp_error_type", (_enum_base,), {
+ofp_error_type = type("ofp_error_type", (_enum_base,), {
 	"prefix": "OFPET",
 	"values": {
 		'''HELLO_FAILED BAD_REQUEST BAD_ACTION BAD_INSTRUCTION BAD_MATCH
@@ -330,19 +347,19 @@ type("ofp_error_type", (_enum_base,), {
 		"EXPERIMENTER": 0xffff }
 	})()
 
-type("ofp_hello_failed_code", (_enum_base,), {
+ofp_hello_failed_code = type("ofp_hello_failed_code", (_enum_base,), {
 	"prefix": "OFPHFC",
 	"values": "INCOMPATIBLE EPERM"
 	})()
 
-type("ofp_bad_request_code", (_enum_base,), {
+ofp_bad_request_code = type("ofp_bad_request_code", (_enum_base,), {
 	"prefix": "OFPBRC",
 	"values": '''BAD_VERSION BAD_TYPE BAD_MULTIPART BAD_EXPERIMENTER
 		BAD_EXP_TYPE EPERM BAD_LEN BUFFER_EMPTY BUFFER_UNKNOWN BAD_TABLE_ID
 		IS_SLAVE BAD_PORT BAD_PACKET MULTIPART_BUFFER_OVERFLOW'''
 	})()
 
-type("ofp_bad_action_code", (_enum_base,), {
+ofp_bad_action_code = type("ofp_bad_action_code", (_enum_base,), {
 	"prefix": "OFPBAC",
 	"values": '''BAD_TYPE BAD_LEN BAD_EXPERIMENTER BAD_EXP_TYPE BAD_OUT_PORT
 		BAD_ARGUMENT EPERM TOO_MANY BAD_QUEUE BAD_OUT_GROUP
@@ -350,14 +367,14 @@ type("ofp_bad_action_code", (_enum_base,), {
 		BAD_SET_TYPE BAD_SET_LEN BAD_SET_ARGUMENT'''
 	})()
 
-type("ofp_bad_instruction_code", (_enum_base,), {
+ofp_bad_instruction_code = type("ofp_bad_instruction_code", (_enum_base,), {
 	"prefix": "OFPBIC",
 	"values": '''UNKNOWN_INST UNSUP_INST BAD_TABLE_ID
 		UNSUP_METADATA UNSUP_METADATA_MASK
 		BAD_EXPERIMENTER BAD_EXP_TYPE BAD_LEN EPERM'''
 	})()
 
-type("ofp_bad_match_code", (_enum_base,), {
+ofp_bad_match_code = type("ofp_bad_match_code", (_enum_base,), {
 	"prefix": "OFPBMC",
 	"values": '''BAD_TYPE BAD_LEN BAD_TAG
 		BAD_DL_ADDR_MASK BAD_NW_ADDR_MASK BAD_WILDCARDS
@@ -365,13 +382,13 @@ type("ofp_bad_match_code", (_enum_base,), {
 		DUP_FIELD EPERM'''
 	})()
 
-type("ofp_flow_mod_failed_code", (_enum_base,), {
+ofp_flow_mod_failed_code = type("ofp_flow_mod_failed_code", (_enum_base,), {
 	"prefix": "OFPFMFC",
 	"values": '''UNKNOWN TABLE_FULL BAD_TABLE_ID OVERLAP EPERM
 		BAD_TIMEOUT BAD_COMMAND BAD_FLAGS'''
 	})()
 
-type("ofp_group_mod_failed_code", (_enum_base,), {
+ofp_group_mod_failed_code = type("ofp_group_mod_failed_code", (_enum_base,), {
 	"prefix": "OFPGMFC",
 	"values": '''GROUP_EXISTS INVALID_GROUP WEIGHT_UNSUPPORTED
 		OUT_OF_GROUPS OUT_OF_BUCKETS CHAINING_UNSUPPORTED
@@ -379,44 +396,44 @@ type("ofp_group_mod_failed_code", (_enum_base,), {
 		BAD_TYPE BAD_COMMAND BAD_BUCKET BAD_WATCH EPERM'''
 	})()
 
-type("ofp_table_mod_failed_code", (_enum_base,), {
+ofp_table_mod_failed_code = type("ofp_table_mod_failed_code", (_enum_base,), {
 	"prefix": "OFPTMFC",
 	"values": "BAD_TABLE BAD_CONFIG EPERM"
 	})()
 
-type("ofp_queue_op_failed_code", (_enum_base,), {
+ofp_queue_op_failed_code = type("ofp_queue_op_failed_code", (_enum_base,), {
 	"prefix": "OFPQOFC",
 	"values": "BAD_PORT BAD_QUEUE EPERM"
 	})()
 
-type("ofp_switch_config_failed_code", (_enum_base,), {
+ofp_switch_config_failed_code = type("ofp_switch_config_failed_code", (_enum_base,), {
 	"prefix": "OFPSCFC",
 	"values": "BAD_FLAGS BAD_LEN EPERM"
 	})()
 
-type("ofp_role_request_failed_code", (_enum_base,), {
+ofp_role_request_failed_code = type("ofp_role_request_failed_code", (_enum_base,), {
 	"prefix": "OFPRRFC",
 	"values": "STALE UNSUP BAD_ROLE"
 	})()
 
-type("ofp_meter_mod_failed_code", (_enum_base,), {
+ofp_meter_mod_failed_code = type("ofp_meter_mod_failed_code", (_enum_base,), {
 	"prefix": "OFPMMFC",
 	"values": '''UNKNOWN METER_EXISTS INVALID_METER UNKNOWN_METER
 		BAD_COMMAND BAD_FLAGS BAD_RATE BAD_BURST BAD_BAND BAD_BAND_VALUE
 		OUT_OF_METERS OUT_OF_BANDS'''
 	})()
 
-type("ofp_table_features_failed_code", (_enum_base,), {
+ofp_table_features_failed_code = type("ofp_table_features_failed_code", (_enum_base,), {
 	"prefix": "OFPTFFC",
 	"values": "BAD_TABLE BAD_METADATA BAD_TYPE BAD_LEN BAD_ARGUMENT EPERM"
 	})()
 
-type("ofp_hello_enum_type", (_enum_base,), {
+ofp_hello_enum_type = type("ofp_hello_enum_type", (_enum_base,), {
 	"prefix": "OFPHET",
 	"values": { "VERSIONBITMAP":1 }
 	})()
 
-type("ofp_flow_wildcards", (_enum_base,), {
+ofp_flow_wildcards = type("ofp_flow_wildcards", (_enum_base,), {
 	"prefix": "OFPFW",
 	"values": {
 		"IN_PORT": 1<<0,
@@ -437,12 +454,12 @@ type("ofp_flow_wildcards", (_enum_base,), {
 		"ALL": 0xfffff }
 	})()
 
-type("ofp_flow_expired_readon", (_enum_base,), {
+ofp_flow_expired_readon = type("ofp_flow_expired_readon", (_enum_base,), {
 	"prefix": "OFPER",
 	"values": "IDLE_TIMEOUT HARD_TIMEOUT"
 	})()
 
-type("ofp_action_type", (_enum_base,), {
+ofp_action_type = type("ofp_action_type", (_enum_base,), {
 	"prefix": "OFPAT",
 	"values": {'''OUTPUT SET_VLAN_VID SET_VLAN_PCP STRIP_VLAN
 		SET_DL_SRC SET_DL_DST SET_NW_SRC SET_NW_DST

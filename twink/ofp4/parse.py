@@ -37,7 +37,13 @@ def parse(message, offset=0):
 		return ofp_header(message, cursor)
 	elif header.type == OFPT_ERROR:
 		return ofp_error_msg(message, cursor)
-	elif header.type == 
+	elif header.type == OFPT_FEATURES_REPLY:
+		return ofp_switch_features(message, cursor)
+	elif header.type in (OFPT_SET_CONFIG_REQUEST, OFPT_GET_CONFIG_REPLY):
+		return ofp_switch_config(message, cursor)
+	elif header.type == OFPT_PACKET_IN:
+		return ofp_packet_in(message, cursor)
+	# XXX more OFPT
 	else:
 		return ofp_(message, cursor)
 
@@ -81,11 +87,11 @@ def ofp_packet_queue(message, offset):
 	while cursor.offset < offset + len:
 		prop_header = ofp_queue_prop_header(message, cursor.offset)
 		if prop_header.property == OFPQT_MIN:
-			properties.append(ofp_queue_prop_min_rate(message, cursor)
+			properties.append(ofp_queue_prop_min_rate(message, cursor))
 		elif prop_header.property == OFPQT_MAX:
-			properties.append(ofp_queue_prop_max_rate(message, cursor)
+			properties.append(ofp_queue_prop_max_rate(message, cursor))
 		elif prop_header.property == OFPQT_EXPERIMENTER:
-			properties.append(ofp_queue_prop_experimenter(message, cursor)
+			properties.append(ofp_queue_prop_experimenter(message, cursor))
 		else:
 			raise ValueError(prop_header)
 	assert cursor.offset == offset + len
@@ -507,6 +513,11 @@ def ofp_group_desc(message, offset):
 		"length type group_id buckets")(
 		length,type,group_id,buckets)
 
+# 7.4.1
+def ofp_packet_in(message, offset):
+	# XXX:
+	pass
+
 # 7.4.4
 def ofp_error_msg(message, offset=0):
 	cursor = _cursor(offset)
@@ -530,7 +541,7 @@ def ofp_hello(message, offset=0):
 	header = ofp_header(message, cursor)
 	
 	elements = []
-	while cursor.offset < head.offset + header.length:
+	while cursor.offset < offset + header.length:
 		elem_header = ofp_hello_elem_header(message, cursor.offset)
 		
 		if elem_header.type == 1:
