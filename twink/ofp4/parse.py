@@ -1,7 +1,10 @@
 from __future__ import absolute_import
-from twink.ofp4 import *
 import struct
 from collections import namedtuple
+from . import *
+
+_len = len
+_type = type
 
 def _align(length):
 	return (length+7)/8*8
@@ -31,7 +34,7 @@ def _unpack(fmt, msg, offset):
 
 def from_bitmap(uint32_t_list):
 	ret = []
-	for o,i in zip(range(len(uint32_t_list)),uint32_t_list):
+	for o,i in zip(range(_len(uint32_t_list)),uint32_t_list):
 		for s in range(32):
 			if i & (1<<s):
 				ret.append(32*o + s)

@@ -1,12 +1,12 @@
 from __future__ import absolute_import
 import struct
 import random
-from twink.ofp4 import *
+from . import *
 
 _len = len
 _type = type
 
-default_xid = lambda: random.random()*0xFFFFFFFF
+default_xid = lambda: long(random.random()*0xFFFFFFFF)
 
 def _obj(obj):
 	if isinstance(obj, str):
