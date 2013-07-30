@@ -636,7 +636,7 @@ def ofp_hello(header, elements):
 	else:
 		raise ValueError(elements)
 	
-	return fix_ofp_header(1, _obj(header)+elements)
+	return fix_ofp_header(OFPT_HELLO, _obj(header)+elements)
 
 
 def ofp_hello_elem_header(type, length):

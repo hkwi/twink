@@ -29,20 +29,35 @@ def _unpack(fmt, msg, offset):
 	cur.offset += struct.calcsize(fmt)
 	return ret
 
+def from_bitmap(uint32_t_list):
+	ret = []
+	for o,i in zip(range(len(uint32_t_list)),uint32_t_list):
+		for s in range(32):
+			if i & (1<<s):
+				ret.append(32*o + s)
+	return ret
+
 def parse(message, offset=0):
+	if message is None:
+		return None
+	
 	cursor = _cursor(offset)
 	header = ofp_header(message, cursor.offset)
 	assert header.version == 4
 	if header.type == OFPT_HELLO:
-		return ofp_header(message, cursor)
+		return ofp_hello(message, cursor)
 	elif header.type == OFPT_ERROR:
 		return ofp_error_msg(message, cursor)
 	elif header.type == OFPT_FEATURES_REPLY:
 		return ofp_switch_features(message, cursor)
-	elif header.type in (OFPT_SET_CONFIG_REQUEST, OFPT_GET_CONFIG_REPLY):
+	elif header.type in (OFPT_SET_CONFIG, OFPT_GET_CONFIG_REPLY):
 		return ofp_switch_config(message, cursor)
 	elif header.type == OFPT_PACKET_IN:
 		return ofp_packet_in(message, cursor)
+	elif header.type == OFPT_MULTIPART_REQUEST:
+		return ofp_multipart_request(message, cursor)
+	elif header.type == OFPT_MULTIPART_REPLY:
+		return ofp_multipart_reply(message, cursor)
 	# XXX more OFPT
 	else:
 		return ofp_(message, cursor)
@@ -507,11 +522,21 @@ def ofp_group_desc(message, offset):
 	cursor = _cursor(offset)
 	offset = cursor.offset
 	
-	(length, type, group_id) = _unpack("HBxI", message, offset)
+	(length, type, group_id) = _unpack("HBxI", message, cursor)
 	buckets = _list_fetch(message, cursor, offset+length, ofp_bucket)
 	return namedtuple("ofp_group_desc",
 		"length type group_id buckets")(
 		length,type,group_id,buckets)
+
+# 7.3.5.11
+def ofp_group_features(message, offset):
+	cursor = _cursor(offset)
+	(type,capabilities) = _unpack("II", message, cursor)
+	max_groups = _unpack("4I", message, cursor)
+	actions = _unpack("4I", message, cursor)
+	return namedtuple("ofp_group_features",
+		"type,capabilities,max_groups,actions")(
+		type,capabilities,max_groups,actions)
 
 # 7.4.1
 def ofp_packet_in(message, offset):

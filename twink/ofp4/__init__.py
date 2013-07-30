@@ -90,7 +90,7 @@ ofp_type = type("ofp_type", (_enum_base,), {
 ofp_port_config = type("ofp_port_config", (_enum_base,), {
 	# XXX There're two definitions, each in 7.2.1 and A.6.8
 	"prefix": "OFPPC",
-	"bitshifts": "PORT_DOWN NO_STP NO_RECV NO_RECV_STP FLOOD FWD PACKET_IN"
+	"bitshifts": "PORT_DOWN NO_STP NO_RECV NO_RECV_STP NO_FLOOD NO_FWD NO_PACKET_IN"
 	})()
 
 ofp_port_state = type("ofp_port_state", (_enum_base,), {
@@ -180,6 +180,7 @@ ofp_instruction_type = type("ofp_instruction_type", (_enum_base,), {
 		"EXPERIMENTER":   0xFFFF}
 	})()
 
+# 7.2.5
 ofp_action_type = type("ofp_action_type", (_enum_base,), {
 	"prefix": "OFPAT",
 	"values": {
@@ -190,6 +191,15 @@ ofp_action_type = type("ofp_action_type", (_enum_base,), {
 			SET_NW_TTL DEC_NW_TTL SET_FIELD PUSH_PBB POP_PBB''': 15,
 		"EXPERIMENTER": 0xffff}
 	})()
+
+# A.6.17 
+# ofp_action_type = type("ofp_action_type", (_enum_base,), {
+# 	"prefix": "OFPAT",
+# 	"values": {'''OUTPUT SET_VLAN_VID SET_VLAN_PCP STRIP_VLAN
+# 		SET_DL_SRC SET_DL_DST SET_NW_SRC SET_NW_DST
+# 		SET_TP_SRC SET_TP_DST''':0,
+# 		"VENDOR": 0xffff}
+# 	})()
 
 ofp_controller_max_len = type("ofp_controller_max_len", (_enum_base,), {
 	"prefix": "OFPCML",
@@ -457,13 +467,5 @@ ofp_flow_wildcards = type("ofp_flow_wildcards", (_enum_base,), {
 ofp_flow_expired_readon = type("ofp_flow_expired_readon", (_enum_base,), {
 	"prefix": "OFPER",
 	"values": "IDLE_TIMEOUT HARD_TIMEOUT"
-	})()
-
-ofp_action_type = type("ofp_action_type", (_enum_base,), {
-	"prefix": "OFPAT",
-	"values": {'''OUTPUT SET_VLAN_VID SET_VLAN_PCP STRIP_VLAN
-		SET_DL_SRC SET_DL_DST SET_NW_SRC SET_NW_DST
-		SET_TP_SRC SET_TP_DST''':0,
-		"VENDOR": 0xffff}
 	})()
 
