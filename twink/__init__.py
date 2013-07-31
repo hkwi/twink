@@ -267,7 +267,7 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 					self.seq.append(Barrier(bxid))
 					self.seq.append(Chunk(message_handler))
 			elif isinstance(seq_last, Barrier):
-				self.seq.append(Chunk(callback))
+				self.seq.append(Chunk(message_handler))
 			else:
 				assert False, "seq element must be Chunk or Barrier"
 		else:
@@ -320,6 +320,19 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 		if self.callback:
 			return self.callback(message, self)
 		logging.warn("No callback found for handling message %s" % binascii.b2a_hex(message))
+
+
+class SwitchChannel(Channel, WeakCallbackCaller):
+	def send(self, message, message_handler):
+		self.callback = message_handler
+		super(SwitchChannel, self).send(message, message_handler)
+		self.direct_send(message)
+	
+	def on_message(self, message):
+		if super(SwitchChannel, self).on_message(message):
+			return True
+		if self.callback:
+			return self.callback(message, self)
 
 
 def easy_message_handler(message, channel):

@@ -66,6 +66,42 @@ class DatagramChannel(Channel):
 			return repr(self.socket)
 
 
+class StreamClient(object):
+	def __init__(self, *args, **kwargs):
+		self.message_handler = kwargs.get("message_handler", easy_message_handler)
+		self.channel_cls = kwargs.get("channel_cls", StreamChannel)
+		self.socket = kwargs["socket"]
+	
+	def run(self):
+		socket = self.socket
+		assert issubclass(self.channel_cls, StreamChannel)
+		channel = self.channel_cls(socket=socket)
+		
+		channel.send(hello(channel.accept_versions), self.message_handler)
+		
+		try:
+			while not socket.closed:
+				message = read_message(socket.recv)
+				if message:
+					spawn(channel.on_message, message)
+				else:
+					break
+		finally:
+			channel.close()
+			socket.close()
+	
+	def stop(self):
+		self.socket.close()
+	
+	def start(self):
+		th = spawn(self.run)
+		try:
+			Event().wait()
+		finally:
+			spawn(self.stop)
+			th.join()
+
+
 class ServerHandler(object):
 	def __init__(self, *args, **kwargs):
 		self.message_handler = kwargs.get("message_handler", easy_message_handler)
@@ -146,7 +182,10 @@ class SyncContext(object):
 	def simple_request(self, channel, ofp_type):
 		(xid, result) = self.prepare()
 		channel.send(ofp_header_only(ofp_type, version=channel.version, xid=xid), self)
-		return result.get()
+		try:
+			return result.get()
+		finally:
+			self.release(xid)
 	
 	def close(self):
 		for k,v in self.results.items():
@@ -154,7 +193,8 @@ class SyncContext(object):
 		self.results = {}
 	
 	def release(self, xid):
-		self.results[xid].set(None)
+		if not self.results[xid].ready():
+			self.results[xid].set(None)
 		del(self.results[xid])
 	
 	def __call__(self, message, channel):
@@ -164,8 +204,9 @@ class SyncContext(object):
 			if oftype == 1:
 				self.results[xid].set_exception(OpenflowError(message))
 			else:
+				if self.results[xid].ready():
+					message = self.results[xid].get() + message
 				self.results[xid].set(message)
-			del(self.results[xid])
 
 
 class SyncChannel(ControllerChannel):
@@ -187,9 +228,9 @@ class SyncChannel(ControllerChannel):
 			raise NotImplemented("openflow version compatibility")
 		(xid, result) = self._sync.prepare()
 		if self.version==1:
-			self.send(struct.pack("!BBHIHH", self.version, 16, 12+len(payload), xid, stype, 0)+payload, self._sync) # OFPT_STATS_REQUEST=16 (v1.0)
+			self.send(struct.pack("!BBHIHH", self.version, 16, 12+len(payload), xid, stype, 0)+payload, None) # OFPT_STATS_REQUEST=16 (v1.0)
 		else:
-			self.send(struct.pack("!BBHIHH4x", self.version, 18, 12+len(payload), xid, stype, 0)+payload, self._sync) # OFPT_STATS_REQUEST=18 (v1.1, v1.2)
+			self.send(struct.pack("!BBHIHH4x", self.version, 18, 12+len(payload), xid, stype, 0)+payload, None) # OFPT_STATS_REQUEST=18 (v1.1, v1.2)
 		return result.get()
 	
 	def barrier(self):
@@ -201,16 +242,16 @@ class SyncChannel(ControllerChannel):
 	def queue_get_config(self, port):
 		(xid, result) = self._sync.prepare()
 		if self.version==1:
-			self.send(struct.pack("!BBHIH2x", self.version, 20, 12, xid, port), self._sync) # OFPT_QUEUE_GET_CONFIG_REQUEST=20 (v1.0)
+			self.send(struct.pack("!BBHIH2x", self.version, 20, 12, xid, port), None) # OFPT_QUEUE_GET_CONFIG_REQUEST=20 (v1.0)
 		else:
-			self.send(struct.pack("!BBHII4x", self.version, 22, 16, xid, port), self._sync) # OFPT_QUEUE_GET_CONFIG_REQUEST=22 (v1.1, v1.2, v1.3)
+			self.send(struct.pack("!BBHII4x", self.version, 22, 16, xid, port), None) # OFPT_QUEUE_GET_CONFIG_REQUEST=22 (v1.1, v1.2, v1.3)
 		return result.get()
 	
 	def role(self, role, generation_id):
 		if self.version in (1,2):
 			raise NotImplemented("openflow version compatibility")
 		(xid, result) = self._sync.prepare()
-		self.send(struct.pack("!BBHII4xQ", self.version, 24, 24, xid, role, generation_id), self._sync) # OFPT_ROLE_REQUEST=24 (v1.2, v1.3)
+		self.send(struct.pack("!BBHII4xQ", self.version, 24, 24, xid, role, generation_id), None) # OFPT_ROLE_REQUEST=24 (v1.2, v1.3)
 		return result.get()
 	
 	def get_async(self):
@@ -226,11 +267,10 @@ class SyncChannel(ControllerChannel):
 		for message in messages:
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			prepared.append(self._sync.prepare(xid=xid))
-			self.send(message, self._sync)
+			self.send(message, None)
 		self.barrier()
 		for (xid, result) in prepared:
-			if not result.ready():
-				self._sync.release(xid)
+			self._sync.release(xid)
 		return [result.get() for (xid, result) in prepared]
 	
 	def close(self):

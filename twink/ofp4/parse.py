@@ -61,6 +61,8 @@ def parse(message, offset=0):
 		return ofp_multipart_request(message, cursor)
 	elif header.type == OFPT_MULTIPART_REPLY:
 		return ofp_multipart_reply(message, cursor)
+	elif header.type == OFPT_GROUP_MOD:
+		return ofp_group_mod(message, cursor)
 	# XXX more OFPT
 	else:
 		return ofp_(message, cursor)
