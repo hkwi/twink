@@ -215,7 +215,7 @@ ofp_capabilities = type("ofp_capabilities", (_enum_base,), {
 		TABLE_STATS
 		PORT_STATS
 		GROUP_STATS''': 0,
-		'''IN_REASM
+		'''IP_REASM
 		QUEUE_STATS''': 5,
 		"PORT_BLOCKED": 8 }
 	})()
@@ -468,4 +468,3 @@ ofp_flow_expired_readon = type("ofp_flow_expired_readon", (_enum_base,), {
 	"prefix": "OFPER",
 	"values": "IDLE_TIMEOUT HARD_TIMEOUT"
 	})()
-

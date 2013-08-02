@@ -57,14 +57,32 @@ def parse(message, offset=0):
 		return ofp_switch_config(message, cursor)
 	elif header.type == OFPT_PACKET_IN:
 		return ofp_packet_in(message, cursor)
+	else header.type == OFPT_FLOW_REMOVED:
+		return ofp_flow_removed(message, cursor)
+	else header.type == OFPT_PORT_STATUS:
+		return ofp_port_status(message, cursor)
+	elif header.type == OFPT_PACKET_OUT:
+		return ofp_packet_out(message, cursor)
+	elif header.type == OFPT_FLOW_MOD:
+		return ofp_flow_mod(message, cursor)
+	elif header.type == OFPT_GROUP_MOD:
+		return ofp_group_mod(message, cursor)
+	elif header.type == OFPT_PORT_MOD:
+		return ofp_port_mod(message, cursor)
+	elif header.type == OFPT_TABLE_MOD
+		return ofp_table_mod(message, cursor)
 	elif header.type == OFPT_MULTIPART_REQUEST:
 		return ofp_multipart_request(message, cursor)
 	elif header.type == OFPT_MULTIPART_REPLY:
 		return ofp_multipart_reply(message, cursor)
-	elif header.type == OFPT_GROUP_MOD:
-		return ofp_group_mod(message, cursor)
-	# XXX more OFPT
 	else:
+		# OFPT_ECHO_REQUEST, OFPT_ECHO_REPLY
+		# OFPT_EXPERIMENTER
+		# OFPT_GET_CONFIG_REQUEST
+		# OFPT_GET_CONFIG_REPLY
+		# OFPT_SET_CONFIG
+		# OFPT_PORT_STATUS
+		# OFPT_BARRIER_REQUEST, OFPT_BARRIER_REPLY
 		return ofp_(message, cursor)
 
 # 7.1
@@ -193,27 +211,7 @@ def ofp_instruction_actions(message, offset):
 	
 	actions = []
 	while cursor.offset < offset + len:
-		header = ofp_action_header(message, cursor.offset)
-		if header.type == OFPAT_OUTPUT:
-			actions.append(ofp_action_output(message, cursor))
-		elif header.type == OFPAT_GROUP:
-			actions.append(ofp_action_group(message, cursor))
-		elif header.type == OFPAT_SET_QUEUE:
-			actions.append(ofp_action_set_queue(message, cursor))
-		elif header.type == OFPAT_SET_MPLS_TTL:
-			actions.append(ofp_action_mpls_ttl(message, cursor))
-		elif header.type == OFPAT_SET_NW_TTL:
-			actions.append(ofp_action_nw_ttl(message, cursor))
-		elif header.type in (OFPAT_PUSH_VLAN,OFPAT_PUSH_MPLS,OFPAT_PUSH_PBB):
-			actions.append(ofp_action_push(message, cursor))
-		elif header.type == OFPAT_POP_MPLS:
-			actions.append(ofp_action_pop_mpls(message, cursor))
-		elif header.type == OFPAT_SET_FIELD:
-			actions.append(ofp_action_set_field(message, cursor))
-		elif header.type == OFPAT_EXPERIMENTER:
-			actions.append(ofp_action_experimenter_(message, cursor))
-		else:
-			actions.append(ofp_action_header(message, cursor))
+		actions.append(ofp_action_(message,cursor))
 	
 	return namedtuple("ofp_instruction_actions",
 		"type,len,actions")(type,len,actions)
@@ -239,6 +237,30 @@ def ofp_action_header(message, offset):
 	return namedtuple("ofp_action_header",
 		"type,len")(*_unpack("HH4x", message, offset))
 
+def ofp_action_(message, offset):
+	cursor = _cursor(offset)
+	header = ofp_action_header(message, cursor.offset)
+	if header.type == OFPAT_OUTPUT:
+		return ofp_action_output(message, cursor)
+	elif header.type == OFPAT_GROUP:
+		return ofp_action_group(message, cursor)
+	elif header.type == OFPAT_SET_QUEUE:
+		return ofp_action_set_queue(message, cursor)
+	elif header.type == OFPAT_SET_MPLS_TTL:
+		return ofp_action_mpls_ttl(message, cursor)
+	elif header.type == OFPAT_SET_NW_TTL:
+		return ofp_action_nw_ttl(message, cursor)
+	elif header.type in (OFPAT_PUSH_VLAN,OFPAT_PUSH_MPLS,OFPAT_PUSH_PBB):
+		return ofp_action_push(message, cursor)
+	elif header.type == OFPAT_POP_MPLS:
+		return ofp_action_pop_mpls(message, cursor)
+	elif header.type == OFPAT_SET_FIELD:
+		return ofp_action_set_field(message, cursor)
+	elif header.type == OFPAT_EXPERIMENTER:
+		return ofp_action_experimenter_(message, cursor)
+	else:
+		return ofp_action_header(message, cursor)
+
 def ofp_action_output(message, offset):
 	return namedtuple("ofp_action_output",
 		"type,len,port,max_len")(*_unpack("HHIH6x", message, offset))
@@ -259,7 +281,7 @@ def ofp_action_nw_ttl(message, offset):
 	return namedtuple("ofp_action_nw_ttl",
 		"type,len,nw_ttl")(*_unpack("HHB3x", message, offset))
 
-def ofp_ation_push(message, offset):
+def ofp_action_push(message, offset):
 	return namedtuple("ofp_action_push",
 		"type,len,ethertype")(*_unpack("HHH2x", message, offset))
 
@@ -375,28 +397,8 @@ def ofp_bucket(message, offset):
 	
 	(len,weight,watch_port,watch_group)=_unpack("HHII4x", message, cursor)
 	actions = []
-	while cursor < offset+len:
-		header = ofp_action_header(message, cursor.offset)
-		if header.type == OFPAT_OUTPUT:
-			actions.append(ofp_action_output(message, cursor))
-		elif header.type == OFPAT_GROUP:
-			actions.append(ofp_action_group(message, cursor))
-		elif header.type == OFPAT_SET_QUEUE:
-			actions.append(ofp_action_set_queue(message, cursor))
-		elif header.type == OFPAT_SET_MPLS_TTL:
-			actions.append(ofp_action_mpls_ttl(message, cursor))
-		elif header.type == OFPAT_SET_NW_TTL:
-			actions.append(ofp_action_nw_ttl(message, cursor))
-		elif header.type in (OFPAT_PUSH_VLAN,OFPAT_PUSH_MPLS,OFPAT_PUSH_PBB):
-			actions.append(ofp_action_push(message, cursor))
-		elif header.type == OFPAT_POP_MPLS:
-			actions.append(ofp_action_pop_mpls(message, cursor))
-		elif header.type == OFPAT_SET_FIELD:
-			actions.append(ofp_action_set_field(message, cursor))
-		elif header.type == OFPAT_EXPERIMENTER:
-			actions.append(ofp_action_experimenter_(message, cursor))
-		else:
-			actions.append(ofp_action_header(message, cursor))
+	while cursor.offset < offset+len:
+		actions.append(ofp_action_(message, cursor))
 	
 	return namedtuple("ofp_bucket",
 		"len weight watch_port watch_group actions")(
@@ -404,13 +406,69 @@ def ofp_bucket(message, offset):
 
 # 7.3.4.3
 def ofp_port_mod(message, offset):
-	# XXX:
-	pass
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	
+	(port_no, hw_addr, config, advertise) = _unpack("I4x6s2xIII4x", message, offset)
+	assert offset + header.length == cursor.offset
+	return namedtuple("ofp_port_mod",
+		"header,port_no,hw_addr,config,advertise")(
+		header,port_no,hw_addr,config,advertise)
 
 # 7.3.4.4
 def ofp_meter_mod(message, offset):
-	# XXX:
-	pass
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	
+	(command,flags,meter_id) = _unpack("HHI", message, cursor)
+	
+	bands = []
+	while cursor.offset < offset + header.length:
+		bands.append(ofp_meter_band_(message, cursor))
+	
+	return namedtuple("ofp_meter_mod",
+		"header,command,flags,meter_id,bands")(
+		header,command,flags,meter_id,bands)
+
+def ofp_meter_band_header(message, offset):
+	return namedtuple("ofp_meter_band_header",
+		"type,len,rate,burst_size")(*_unpack("HHII", message, offset))
+
+def ofp_meter_band_(message, offset):
+	cursor = _cursor(offset)
+	
+	header = ofp_meter_band_header(message, cursor.offset)
+	if header.type == OFPMBT_DROP:
+		return ofp_meter_band_drop(message, cursor)
+	elif header.type == OFPMBT_DSCP_REMARK:
+		return ofp_meter_band_dscp_remark(message, cursor)
+	elif header.type == OFPMBT_EXPERIMENTER:
+		return ofp_meter_band_experimenter(message, cursor)
+	else:
+		raise ValueError(header)
+
+def ofp_meter_band_drop(message, offset):
+	return namedtuple("ofp_meter_band_drop",
+		"type,len,rate,burst_size")(*_unpack("HHII4x", message, offset))
+
+def ofp_meter_band_dscp_remark(message, offset):
+	return namedtuple("ofp_meter_band_dscp_remark",
+		"type,len,rate,burst_size,prec_level")(
+		*_unpack("HHIIB3x", message, offset))
+
+def ofp_meter_band_experimenter(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type,len,rate,burst_size,experimenter) = _unpack("HH3I", message, offset)
+	data = message[cursor.offset:offset+len]
+	return namedtuple("ofp_meter_band_experimenter",
+		"type,len,rate,burst_size,experimenter,data")(
+		type,len,rate,burst_size,experimenter,data)
 
 # 7.3.5
 def ofp_multipart_request(message, offset=0):
@@ -543,10 +601,79 @@ def ofp_group_features(message, offset):
 		"type,capabilities,max_groups,actions")(
 		type,capabilities,max_groups,actions)
 
+# 7.3.7
+def ofp_packet_out(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	
+	(buffer_id, in_port, actions_len) = _unpack("IIH6x", message, cursor)
+	
+	actions_end = cursor.offset + actions_len
+	actions = []
+	while cursor.offset < actions_end:
+		actions.append(ofp_action_(message, cursor))
+	
+	data = message[cursor.offset:offset+header.length]
+	
+	return namedtuple("ofp_packet_out",
+		"header,buffer_id,in_port,actions_len,actions,data")(
+		header,buffer_id,in_port,actions_len,actions,data)
+
 # 7.4.1
 def ofp_packet_in(message, offset):
-	# XXX:
-	pass
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	
+	(buffer_id, total_len, reason, table_id, cookie) = _unpack("IHBBQ", message, cursor)
+	
+	match = ofp_match(message, cursor)
+	_unpack("2x", message, cursor);
+	data = message[cursor.offset:offset+header.length]
+	
+	return namedtuple("ofp_packet_in",
+		"header,buffer_id,total_len,reason,table_id,cookie,match,data")(
+		header,buffer_id,total_len,reason,table_id,cookie,match,data)
+
+# 7.4.2
+def ofp_flow_removed(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	
+	(cookie,priority,reason,table_id,
+	duration_sec,duration_nsec,
+	idle_timeout,hard_timeout,packet_count,byte_count) = _unpack("QHBBIIHHQQ", message, cursor)
+	
+	match = ofp_match(message, cursor)
+	
+	return namedtuple("ofp_flow_removed",
+		'''header cookie priority reason table_id 
+		duration_sec duration_nsec 
+		idle_timeout hard_timeout packet_count byte_count
+		match''')(
+		header,cookie,priority,reason,table_id,
+		duration_sec,duration_nsec,
+		idle_timeout,hard_timeout,packet_count,byte_count,
+		match)
+
+# 7.4.3
+def ofp_port_status(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	
+	(reason,) = _unpack("B7x", message, cursor)
+	
+	desc = ofp_port(message, cursor)
+	return namedtuple("ofp_port_status",
+		"header,reason,desc")(
+		header,reason,desc)
 
 # 7.4.4
 def ofp_error_msg(message, offset=0):
