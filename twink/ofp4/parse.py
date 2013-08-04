@@ -57,9 +57,9 @@ def parse(message, offset=0):
 		return ofp_switch_config(message, cursor)
 	elif header.type == OFPT_PACKET_IN:
 		return ofp_packet_in(message, cursor)
-	else header.type == OFPT_FLOW_REMOVED:
+	elif header.type == OFPT_FLOW_REMOVED:
 		return ofp_flow_removed(message, cursor)
-	else header.type == OFPT_PORT_STATUS:
+	elif header.type == OFPT_PORT_STATUS:
 		return ofp_port_status(message, cursor)
 	elif header.type == OFPT_PACKET_OUT:
 		return ofp_packet_out(message, cursor)
@@ -69,20 +69,27 @@ def parse(message, offset=0):
 		return ofp_group_mod(message, cursor)
 	elif header.type == OFPT_PORT_MOD:
 		return ofp_port_mod(message, cursor)
-	elif header.type == OFPT_TABLE_MOD
+	elif header.type == OFPT_TABLE_MOD:
 		return ofp_table_mod(message, cursor)
 	elif header.type == OFPT_MULTIPART_REQUEST:
 		return ofp_multipart_request(message, cursor)
 	elif header.type == OFPT_MULTIPART_REPLY:
 		return ofp_multipart_reply(message, cursor)
+	elif header.type == OFPT_EXPERIMETER:
+		return ofp_experimenter_(message, cursor)
+	elif header.type == OFPT_QUEUE_GET_CONFIG_REQUEST:
+		return ofp_queue_get_config_request(message, cursor)
+	elif header.type == OFPT_QUEUE_GET_CONFIG_REPLY:
+		return ofp_queue_get_config_reply(message, cursor)
+	elif header.type in (OFPT_SET_ASYNC_REQUEST, OFPT_GET_ASYNC_REPLY):
+		return ofp_async_config(message, cursor)
+	elif header.type == OFPT_METER_MOD:
+		return ofp_meter_mod(message, cursor)
 	else:
 		# OFPT_ECHO_REQUEST, OFPT_ECHO_REPLY
-		# OFPT_EXPERIMENTER
-		# OFPT_GET_CONFIG_REQUEST
-		# OFPT_GET_CONFIG_REPLY
-		# OFPT_SET_CONFIG
-		# OFPT_PORT_STATUS
+		# OFPT_FEATURES_REQUEST
 		# OFPT_BARRIER_REQUEST, OFPT_BARRIER_REPLY
+		# OFPT_GET_ASYNC_REQUEST
 		return ofp_(message, cursor)
 
 # 7.1
@@ -105,12 +112,13 @@ def ofp_(message, offset):
 	return namedtuple("ofp_",
 		"header,data")(header, data)
 
-# 7.2.1
+# 7.2.1 and 7.3.5.7
 def ofp_port(message, offset):
 	cursor = _cursor(offset)
 	p = list(_unpack("I4x6s2x16sII6I", message, cursor))
 	p[2] = p[2].partition("\0")[0]
-	return namedtuple('''ofp_port hw_addr name
+	return namedtuple("ofp_port", '''
+		port_no hw_addr name
 		config state
 		curr advertised supported peer
 		curr_speed max_speed''')(*p)
@@ -194,6 +202,24 @@ def ofp_oxm_experimenter_header(message, offset):
 def ofp_instruction(message, offset):
 	return namedtuple("ofp_instruction",
 		"type len")(*_unpack("HH", message, offset))
+
+def ofp_instruction_(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type, len) = ofp_instruction(message, cursor.offset)
+	if type == OFPIT_GOTO_TABLE:
+		instructions.append(ofp_instruction_goto_table(message, cursor))
+	elif type == OFPIT_WRITE_METADATA:
+		instructions.append(ofp_instruction_write_metadata(message, cursor))
+	elif type in (OFPIT_WRITE_ACTIONS, OFPIT_APPLY_ACTIONS, OFPIT_CLEAR_ACTIONS):
+		instructions.append(ofp_instruction_actions(message, cursor))
+	elif type == OFPIT_METER:
+		instructions.append(ofp_instruction_meter(message, cursor))
+	elif type == OFPIT_EXPERIMENTER:
+		instructions.append(ofp_instruction_experimenter(message, cursor))
+	else:
+		raise ValueError(ofp_instruction(message, cursor.offset))
 
 def ofp_instruction_goto_table(message, offset):
 	return namedtuple("ofp_instruction_goto_table",
@@ -353,21 +379,7 @@ def ofp_flow_mod(message, offset):
 		idle_timeout,hard_timeout,priority,
 		buffer_id,out_port,out_group,flags) = _unpack("QQBB3H3IH2x", message, cursor)
 	match = ofp_match(message, cursor)
-	instructions = []
-	while cursor.offset < offset + header.length:
-		(type, len) = ofp_instruction(message, cursor.offset)
-		if type == OFPIT_GOTO_TABLE:
-			instructions.append(ofp_instruction_goto_table(message, cursor))
-		elif type == OFPIT_WRITE_METADATA:
-			instructions.append(ofp_instruction_write_metadata(message, cursor))
-		elif type in (OFPIT_WRITE_ACTIONS, OFPIT_APPLY_ACTIONS, OFPIT_CLEAR_ACTIONS):
-			instructions.append(ofp_instruction_actions(message, cursor))
-		elif type == OFPIT_METER:
-			instructions.append(ofp_instruction_meter(message, cursor))
-		elif type == OFPIT_EXPERIMENTER:
-			instructions.append(ofp_instruction_experimenter(message, cursor))
-		else:
-			raise ValueError(ofp_instruction(message, cursor.offset))
+	instructions = _list_fetch(message, cursor, offset+header.length, ofp_instruction_)
 	
 	return namedtuple("ofp_flow_mod",
 		'''header,cookie,cookie_mask,table_id,command,
@@ -543,8 +555,7 @@ def ofp_multipart_reply(message, offset=0):
 	elif type == OFPMP_PORT_DESC:
 		body = _list_fetch(message, cursor, offset + header.length, ofp_port)
 	elif type == OFPMP_EXPERIMENTER:
-		body = message[cursor.offset:offset+header.length]
-		cursor.offset = offset+headr.length
+		body = ofp_experimenter_multipart_(message, cursor, offset+header.length)
 	else:
 		raise ValueError("multiaprt type=%d flags=%s" % (type, flags))
 	
@@ -557,6 +568,178 @@ def _list_fetch(message, cursor, limit, fetcher):
 		ret.append(fetcher(message, cursor))
 	assert cursor.offset == limit
 	return ret
+
+# 7.3.5.1
+def ofp_desc(message, offset):
+	return namedtuple("ofp_desc",
+		"mfr_desc,hw_desc,sw_desc,serial_num,dp_desc")(*_unpack("256s256s256s32s256s"))
+
+# 7.3.5.2
+def ofp_flow_stats_request(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(table_id,out_port,out_group,cookie,cookie_mask) = _unpack("B3xII4xQQ", message, cursor)
+	
+	match = ofp_match(message, cursor)
+	
+	return namedtuple("ofp_flow_stats_request",
+		"table_id,out_port,out_group,cookie,cookie_mask,match")(
+		table_id,out_port,out_group,cookie,cookie_mask,match)
+
+def ofp_flow_stats(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(length,table_id,duration_sec,duration_nsec,priority,
+	idle_timeout,hard_timeout,flags,cookie,
+	packet_count,byte_count) = _unpack("HBxII4H4x3Q", message, cursor)
+	
+	match = ofp_match(message, cursor)
+	
+	instructions = _list_fetch(message, cursor, offset+length, ofp_instruction_)
+	
+	return namedtuple("ofp_flow_stats", '''
+		length table_id duration_sec duration_nsec
+		priority idle_timeout hard_timeout flags cookie
+		packet_count byte_count match instructions''')(
+		length,table_id,duration_sec,duration_nsec,priority,
+		idle_timeout,hard_timeout,flags,cookie,
+		packet_count,byte_count,match,instructions)
+
+# 7.3.5.3
+def ofp_aggregate_stats_request(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(table_id,out_port,out_group,cookie,cookie_mask) = _unpack("B3xII4xQQ", message, cursor)
+	match = ofp_match(message, cursor)
+	
+	return namedtuple("ofp_aggregate_stats_request",
+		"table_id,out_port,out_group,cookie,cookie_mask,match")(
+		table_id,out_port,out_group,cookie,cookie_mask,match)
+
+# 7.3.5.4
+def ofp_table_stats(message, offset):
+	return namedtuple("ofp_table_stats", "table_id,out_port,out_group,cookie,cookie_mask")(
+		*_unpack("B3xIQQ", message, offset))
+
+# 7.3.5.5.1
+def ofp_table_feature_prop_header(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(length,table_id,name,metadata_match,metadata_write,config,max_entries) = _unpack("HB5x32sQQII", message, cursor)
+	properties = _list_fetch(message, cursor, offset+length, ofp_table_feature_prop_)
+	
+	return namedtuple("ofp_table_feature_prop_header",
+		"length,table_id,name,metadata_match,metadata_write,config,max_entries,properties")(
+		length,table_id,name,metadata_match,metadata_write,config,max_entries,properties)
+
+# 7.3.5.5.2
+def ofp_table_feature_prop_header(message, offset):
+	return namedtuple("ofp_table_feature_prop_header",
+		"type,length")(*_unpack("HH", message, offset))
+
+def ofp_table_feature_prop_instructions(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type,length) = _unpack("HH", message, cursor)
+	instruction_ids = []
+	while cursor.offset < offset+length:
+		header = ofp_instruction(cursor.offset)
+		if header.type == OFPIT_EXPERIMENTER:
+			instruction_ids.append(ofp_instruction_experimenter(message, cursor))
+		else:
+			assert header.len == 4
+			instruction_ids.append(header)
+	cursor.offset += _align(length)-length
+	
+	return namedtuple("ofp_table_feature_prop_instructions",
+		"type,length,instruction_ids")(
+		type,length,instruction_ids)
+
+def ofp_table_feature_prop_next_tables(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type,length) = _unpack("HH", message, cursor)
+	next_table_ids = _unpack("%dB" % (length-4), message, offset)
+	cursor.offset += _align(length)-length
+	
+	return namedtuple("ofp_table_feature_prop_next_tables",
+		"type,length,next_table_ids")(type,length,next_table_ids)
+
+def ofp_table_feature_prop_actions(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type,length) = _unpack("HH", message, cursor)
+	action_ids = []
+	while cursor.offset < offset+length:
+		header = ofp_action_header(message, cursor.offset)
+		if header.type == OFPAT_EXPERIMENTER:
+			action_ids.append(ofp_action_experimenter(message, cursor))
+		else:
+			assert header.len == 4
+			action_ids.append(header)
+	cursor.offset += _align(length)-length
+	
+	return namedtuple("ofp_table_feature_prop_actions",
+		"type,length,action_ids")(type,length,action_ids)
+
+def ofp_table_features_prop_oxm(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type,length) = _unpack("HH", message, cursor)
+	oxm_ids = _unpack("%dI" % ((length-4)/4), message, cursor)
+	cursor.offset += _align(length)-length
+	
+	return namedtuple("ofp_table_features_prop_oxm",
+		"type,length,oxm_ids")(type,length,oxm_ids)
+
+def ofp_table_feature_prop_experimenter(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(type,length,experimenter,exp_type) = _unpack("HHII", message, cursor)
+	data = message[cursor.offset:offset+length]
+	cursor.offset += _align(length)-length
+	
+	return namedtuple("ofp_table_feature_prop_experimenter",
+		"type,length,experimenter,exp_type,data")(
+		type,length,experimenter,exp_type,data)
+
+# 7.3.5.6
+def ofp_port_stats_request(message, offset):
+	return namedtuple("ofp_port_stats_request",
+		"port_no")(*_unpack("I4x", message, offset))
+
+def ofp_port_stats(message, offset):
+	return namedtuple("ofp_port_stats", '''
+		port_no
+		rx_packets tx_packets
+		rx_bytes tx_bytes
+		rx_dropped tx_dropped
+		rx_errors tx_errors
+		rx_frame_err
+		rx_over_err
+		rx_crc_err
+		collisions
+		duration_sec duration_nsec''')(*_unpack("I3x12Q2I", message, offset))
+
+# 7.3.5.8
+def ofp_queue_stats_request(message, offset):
+	return namedtuple("ofp_queue_stats_request",
+		"port_no queue_id")(*_unpack("II", message, offset))
+
+def ofp_queue_stats(message, offset):
+	return namedtuple("ofp_queue_stats", '''
+		port_no queue_id
+		tx_bytes tx_packets tx_errors
+		duration_sec duration_nsec''')(*_unpack("2I3Q2I", message, offset))
 
 # 7.3.5.9
 def ofp_group_stats_request(message, offset):
@@ -601,6 +784,86 @@ def ofp_group_features(message, offset):
 		"type,capabilities,max_groups,actions")(
 		type,capabilities,max_groups,actions)
 
+# 7.3.5.12
+def ofp_meter_multipart_request(message, offset):
+	# and 7.3.5.13
+	return namedtuple("ofp_meter_multipart_request",
+		"meter_id")(*_unpack("I4x", message, offset))
+
+def ofp_meter_stats(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(meter_id,len,flow_count,packet_in_count,byte_in_count,
+		duration_sec,duration_nsec) = _unpack("IH6xIQQII", message, cursor)
+	
+	band_stats = _list_fetch(message, cursor, offset+len, ofp_meter_band_stats)
+	
+	return namedtuple("ofp_meter_stats", '''
+		meter_id len flow_count packet_in_count byte_in_count 
+		duration_sec duration_nsec band_stats''')(
+		meter_id,len,flow_count,packet_in_count,byte_in_count,
+		duration_sec,duration_nsec,band_stats)
+
+def ofp_meter_band_stats(message, offset):
+	return namedtuple("ofp_meter_band_stats",
+		"packet_band_count,byte_band_count")(*_unpack("QQ", message, offset))
+
+# 7.3.5.13
+def ofp_meter_config(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(length,flags,meter_id) = _unpack("HHI", message, cursor)
+	bands = _list_fetch(message, cursor, offset+length, ofp_meter_band_)
+	
+	return namedtuple("ofp_meter_config",
+		"length,flags,meter_id,bands")(
+		length,flags,meter_id,bands)
+
+# 7.3.5.14
+def ofp_meter_features(message, offset):
+	return namedtuple("ofp_meter_features", '''
+		max_meter band_types capabilities
+		max_bands max_color''')(*_unpack("3IBB2x", message, offset))
+
+# 7.3.5.15
+def ofp_experimenter_multipart_header(message, offset):
+	return namedtuple("ofp_experimenter_multipart_header",
+		"experimenter,exp_type")(*_unpack("II", message, offset))
+
+def ofp_experimenter_multipart_(message, offset, limit):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(experimenter,exp_type) = ofp_experimenter_multipart_header(message, cursor)
+	data = message[cursor.offset:limit]
+	cursor.offset = limit
+	
+	return namedtuple("ofp_experimenter_multipart_",
+		"experimenter,exp_type,data")(experimenter,exp_type,data)
+
+# 7.3.6
+def ofp_queue_get_config_request(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	(port,) = _unpack("I4x", message, cursor)
+	return namedtuple("ofp_queue_get_config_request",
+		"header,port")(header,port)
+
+def ofp_queue_get_config_reply(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	(port,) = _unpack("I4x", message, cursor)
+	queues = _list_fetch(message, cursor, offset+header.length, ofp_packet_queue)
+	
+	return namedtuple("ofp_queue_get_config_reply",
+		"header,port,queues")(header,port,queues)
+
 # 7.3.7
 def ofp_packet_out(message, offset):
 	cursor = _cursor(offset)
@@ -620,6 +883,29 @@ def ofp_packet_out(message, offset):
 	return namedtuple("ofp_packet_out",
 		"header,buffer_id,in_port,actions_len,actions,data")(
 		header,buffer_id,in_port,actions_len,actions,data)
+
+# 7.3.9
+def ofp_role_request(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	(role,generation_id) = _unpack("I4xQ", message, cursor)
+	
+	return namedtuple("ofp_role_request",
+		"header,role,generation_id")(header,role,generation_id)
+
+# 7.3.10
+def ofp_async_config(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	p = _unpack("6I", message, cursor)
+	
+	return namedtuple("ofp_async_config",
+		"header,packet_in_mask,port_status_mask,flow_removed_mask")(
+		header,p[0:2],p[2:4],p[4:6])
 
 # 7.4.1
 def ofp_packet_in(message, offset):
@@ -724,3 +1010,24 @@ def ofp_hello_elem_versionbitmap(message, offset):
 	return namedtuple("ofp_hello_elem_versionbitmap",
 		"type length bitmaps")(type,length,bitmaps)
 
+# 7.5.4
+def ofp_experimenter_header(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	header = ofp_header(message, cursor)
+	(experimenter,exp_type) = _unpack("II", message, cursor)
+	return namedtuple("ofp_experimenter_header",
+		"header,experimenter,exp_type")(header,experimenter,exp_type)
+
+def ofp_experimenter_(message, offset):
+	cursor = _cursor(offset)
+	offset = cursor.offset
+	
+	(header,experimenter,exp_type) = ofp_experimenter_header(message, cursor)
+	
+	data = message[cursor.offset:offset+length]
+	cursor.offset = offset+length
+	
+	return namedtuple("ofp_experimenter_",
+		"header,experimenter,exp_type,data")(header,experimenter,exp_type,data)
