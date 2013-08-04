@@ -619,18 +619,25 @@ def ofp_aggregate_stats_request(message, offset):
 		"table_id,out_port,out_group,cookie,cookie_mask,match")(
 		table_id,out_port,out_group,cookie,cookie_mask,match)
 
+def ofp_aggregate_stats_reply(message, offset):
+	return namedtuple("ofp_aggregate_stats_reply",
+		"packet_count,byte_count,flow_count")(
+		*_unpack("QQI4x", message, offset))
+
 # 7.3.5.4
 def ofp_table_stats(message, offset):
 	return namedtuple("ofp_table_stats", "table_id,out_port,out_group,cookie,cookie_mask")(
 		*_unpack("B3xIQQ", message, offset))
 
 # 7.3.5.5.1
-def ofp_table_feature_prop_header(message, offset):
+def ofp_table_features(message, offset):
 	cursor = _cursor(offset)
 	offset = cursor.offset
 	
 	(length,table_id,name,metadata_match,metadata_write,config,max_entries) = _unpack("HB5x32sQQII", message, cursor)
 	properties = _list_fetch(message, cursor, offset+length, ofp_table_feature_prop_)
+	
+	name = name.partition('\0')[0]
 	
 	return namedtuple("ofp_table_feature_prop_header",
 		"length,table_id,name,metadata_match,metadata_write,config,max_entries,properties")(
@@ -689,7 +696,7 @@ def ofp_table_feature_prop_actions(message, offset):
 	return namedtuple("ofp_table_feature_prop_actions",
 		"type,length,action_ids")(type,length,action_ids)
 
-def ofp_table_features_prop_oxm(message, offset):
+def ofp_table_feature_prop_oxm(message, offset):
 	cursor = _cursor(offset)
 	offset = cursor.offset
 	
@@ -697,7 +704,7 @@ def ofp_table_features_prop_oxm(message, offset):
 	oxm_ids = _unpack("%dI" % ((length-4)/4), message, cursor)
 	cursor.offset += _align(length)-length
 	
-	return namedtuple("ofp_table_features_prop_oxm",
+	return namedtuple("ofp_table_feature_prop_oxm",
 		"type,length,oxm_ids")(type,length,oxm_ids)
 
 def ofp_table_feature_prop_experimenter(message, offset):

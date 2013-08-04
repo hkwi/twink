@@ -21,14 +21,13 @@ def _pack(fmt, *args):
 		fmt = "!"+fmt
 	return struct.pack(fmt, *args)
 
+def _unpack(fmt, message, offset):
+	if fmt[0] != "!":
+		fmt = "!"+fmt
+	return struct.unpack(fmt, message, offset)
+
 def _align(length):
 	return (length+7)/8*8
-
-
-def fix_ofp_header(type, message):
-	assert isinstance(type, int)
-	msg = _obj(message)
-	return msg[0]+_pack("BH", type, _len(msg))+msg[4:]
 
 # 7.1
 def ofp_header(version, type, length, xid):
@@ -42,10 +41,43 @@ def ofp_header(version, type, length, xid):
 	return _pack("BBHI", version, type, length, xid)
 
 
-def ofp_(header, data):
-	header = _obj(header)
-	type = ord(header[1])
-	return fix_ofp_header(type, header+data)
+def ofp_(header, data, type=None):
+	if isinstance(header, str):
+		(version, oftype, length, xid) = _unpack("BBHI", header)
+		if isinstance(type, int):
+			assert oftype == type
+		elif isinstance(type, (list,tuple)):
+			assert oftype in type
+		elif type is None:
+			pass
+		else:
+			raise ValueError(type)
+	elif isinstance(header, tuple):
+		(version, oftype, length, xid) = *header
+		if isinstance(type, int):
+			if oftype is None:
+				oftype = type
+			else:
+				assert oftype == type
+		elif isinstance(type, (list,tuple)):
+			assert oftype in type
+		elif type is None:
+			assert isinstance(oftype, int)
+		else:
+			raise ValueError(type)
+	elif header is None:
+		version = 4
+		if isinstance(type, int):
+			oftype = type
+		else:
+			raise ValueError(type)
+		xid = default_xid()
+	else:
+		raise ValueError(header)
+	
+	data = _obj(data)
+	length = 8 + _len(data)
+	return ofp_header(version, oftype, length, xid)+data
 
 
 # 7.2.1
@@ -70,7 +102,6 @@ def ofp_port(port_no, hw_addr, name, config, state,
 	assert _len(msg) == 64
 	return msg
 
-
 # 7.2.2
 def ofp_packet_queue(queue_id, port, len, properties):
 	if isinstance(properties, str):
@@ -84,18 +115,12 @@ def ofp_packet_queue(queue_id, port, len, properties):
 	
 	len = 16 + _len(properties)
 	
-	msg = _pack("IIH6x",
+	desc = _pack("IIH6x",
 		queue_id,
 		port,
 		len)
-	assert _len(msg)==16
-	return msg + properties
-
-
-def fix_ofp_queue_prop_header(property, message):
-	msg = _obj(message)
-	return ofp_queue_prop_header(property, _len(msg))+msg[8:]
-
+	assert _len(desc)==16
+	return desc + properties
 
 def ofp_queue_prop_header(property, len):
 	if len is None:
@@ -106,35 +131,60 @@ def ofp_queue_prop_header(property, len):
 	assert _len(msg)==8
 	return msg
 
+def ofp_queue_prop_(prop_header, data, type=None):
+	if isinstance(prop_header, str):
+		(property,len) = _unpack("HH", prop_header)
+		if isinstance(type, int):
+			assert property==type
+		elif isinstance(type, (list, tuple)):
+			assert property in type
+		elif type is None:
+			pass
+		else:
+			raise ValueError(type)
+	elif isinstance(prop_header, (list, tuple)):
+		(property,len) = *prop_header
+		if isinstance(type, int):
+			if property is None:
+				property = type
+			else:
+				assert property==type
+		elif isinstance(type, (list, tuple)):
+			assert property in type
+		elif type is None:
+			assert isinstance(property, int)
+		else:
+			raise ValueError(type)
+	elif prop_header is None:
+		property = type
+	else:
+		raise ValueError(prop_header)
+	
+	data = _obj(data)
+	len = _len(data) + 8
+	return ofp_queue_prop_header(property,len)+data
 
 def ofp_queue_prop_min_rate(prop_header, rate):
-	prop_header = ofp_queue_prop_header(1, 16)
-	msg = _pack("8sH6x",
-			_obj(prop_header),
-			rate)
+	msg = ofp_queue_prop_(prop_header,
+		_pack("H6x", rate),
+		OFPQT_MIN_RATE)
 	assert _len(msg)==16
 	return msg
-
 
 def ofp_queue_prop_max_rate(prop_header, rate):
-	prop_header = ofp_queue_prop_header(2, 16)
-	msg = _pack("8sH6x",
-			_obj(prop_header),
-			rate)
+	msg = ofp_queue_prop_(prop_header,
+		_pack("H6x", rate),
+		OFPQT_MAX_RATE)
 	assert _len(msg)==16
 	return msg
 
-
 def ofp_queue_prop_experimenter(prop_header, experimenter, data):
-	prop_header = ofp_queue_prop_header(0xFFFF, None)
-	msg = fix_ofp_queue_prop_header(0xFFFF, 
-		_pack("8sI4x",
-			_obj(prop_header),
-			experimenter, # experimenter_id
-			)+data)
+	msg = ofp_queue_prop_(prop_header, 
+		_pack("I4x", experimenter)+data,
+		OFPQT_EXPERIMENTER)
 	return msg
 
-
+# 7.2.3.1
 def ofp_match(type, length, oxm_fields):
 	if isinstance(oxm_fields, str):
 		pass
@@ -148,13 +198,17 @@ def ofp_match(type, length, oxm_fields):
 	length = 4 + _len(oxm_fields)
 	
 	msg = _pack("HH", type, length) + oxm_fields + "\0"*(_align(length)-length)
+	assert _len(msg) % 8 == 0
 	return msg
 
+# 7.2.4
+def ofp_instruction(type, len):
+	return _pack("HH", type, len)
 
 def ofp_instruction_goto_table(type, len, table_id):
 	if type is None:
-		type = 1
-	assert type==1
+		type = OFPIT_GOTO_TABLE
+	assert type==OFPIT_GOTO_TABLE
 	len = 8
 	msg = _pack("HHB3x",
 		type,
@@ -163,14 +217,11 @@ def ofp_instruction_goto_table(type, len, table_id):
 	assert _len(msg)==8
 	return msg
 
-
 def ofp_instruction_write_metadata(type, len, metadata, metadata_mask):
 	if type is None:
-		type = 2
-	assert type==2
-	
+		type = OFPIT_WRITE_METADATA
+	assert type==OFPIT_WRITE_METADATA
 	len = 24
-	
 	msg = _pack("HH4xQQ",
 		type,
 		len,
@@ -178,7 +229,6 @@ def ofp_instruction_write_metadata(type, len, metadata, metadata_mask):
 		metadata_mask)
 	assert _len(msg)==24
 	return msg
-
 
 def ofp_instruction_actions(type, len, actions):
 	if isinstance(actions, str):
@@ -190,7 +240,7 @@ def ofp_instruction_actions(type, len, actions):
 	else:
 		raise ValueError(actions)
 	
-	assert type in (3,4,5)
+	assert type in (OFPIT_WRITE_ACTIONS, OFPIT_APPLY_ACTIONS, OFPIT_CLEAR_ACTIONS)
 	
 	len = 8 + _len(actions)
 	msg = _pack("HH4x",
@@ -198,27 +248,23 @@ def ofp_instruction_actions(type, len, actions):
 		len) + actions
 	return msg
 
-
 def ofp_instruction_meter(type, len, meter_id):
 	if type is None:
-		type = 6
-	assert type==6
-	
+		type = OFPIT_METER
+	assert type==OFPIT_METER
 	len = 8
-	
 	msg = _pack("HHI",
 		type,
 		len,
 		meter_id)
 	return msg
 
-
 def ofp_instruction_experimenter(type, len, experimenter, data):
 	if type is None:
-		type = 0xFFFF
-	assert type == 0xFFFF
+		type = OFPIT_EXPERIMENTER
+	assert type == OFPIT_EXPERIMENTER
 	
-	assert isinstance(data, str)
+	data = _obj(data)
 	
 	len = 8 + _len(data)
 	
@@ -228,20 +274,14 @@ def ofp_instruction_experimenter(type, len, experimenter, data):
 		experimenter) + data
 	return msg
 
-
-def fix_ofp_action_header(type, message):
-	msg = _obj(message)
-	return ofp_action_header(type, _len(msg))+msg[8:]
-
-
+# 7.2.5
 def ofp_action_header(type, len):
 	return _pack("HH4x", type, len)
 
-
 def ofp_action_output(type, len, port, max_len):
 	if type is None:
-		type = 0
-	assert type == 0
+		type = OFPAT_OUTPUT
+	assert type == OFPAT_OUTPUT
 	
 	len = 16
 	
@@ -253,11 +293,10 @@ def ofp_action_output(type, len, port, max_len):
 	assert _len(msg) == 16
 	return msg
 
-
 def ofp_action_group(type, len, group_id):
 	if type is None:
-		type = 22
-	assert type == 22
+		type = OFPAT_GROUP
+	assert type == OFPAT_GROUP
 	
 	len = 8
 	
@@ -268,11 +307,10 @@ def ofp_action_group(type, len, group_id):
 	assert _len(msg) == 8
 	return msg
 
-
 def ofp_action_set_queue(type, len, queue_id):
 	if type is None:
-		type = 21
-	assert type == 21
+		type = OFPAT_SET_QUEUE.
+	assert type == OFPAT_SET_QUEUE.
 	
 	len = 8
 	
@@ -283,11 +321,10 @@ def ofp_action_set_queue(type, len, queue_id):
 	assert _len(msg) == 8
 	return msg
 
-
 def ofp_action_mpls_ttl(type, len, mpls_ttl):
 	if type is None:
-		type = 15
-	assert type == 15
+		type = OFPAT_SET_MPLS_TTL
+	assert type == OFPAT_SET_MPLS_TTL
 	
 	len = 8
 	
@@ -298,11 +335,10 @@ def ofp_action_mpls_ttl(type, len, mpls_ttl):
 	assert _len(msg) == 8
 	return msg
 
-
 def ofp_action_nw_ttl(type, len, nw_ttl):
 	if type is None:
-		type = 23
-	assert type == 23
+		type = OFPAT_SET_NW_TTL
+	assert type == OFPAT_SET_NW_TTL
 	
 	len = 8
 	
@@ -313,9 +349,8 @@ def ofp_action_nw_ttl(type, len, nw_ttl):
 	assert _len(msg) == 8
 	return msg
 
-
 def ofp_action_push(type, len, ethertype):
-	assert type in (17, 19, 26)
+	assert type in (OFPAT_PUSH_VLAN, OFPAT_PUSH_MPLS, OFPAT_PUSH_PBB)
 	
 	len = 8
 	
@@ -325,12 +360,11 @@ def ofp_action_push(type, len, ethertype):
 		ethertype)
 	assert _len(msg) == 8
 	return msg
-
 
 def ofp_action_pop_mpls(type, len, ethertype):
 	if type is None:
-		type = 20
-	assert type == 20
+		type = OFPAT_POP_MPLS
+	assert type == OFPAT_POP_MPLS
 	
 	len = 8
 	
@@ -341,11 +375,10 @@ def ofp_action_pop_mpls(type, len, ethertype):
 	assert _len(msg) == 8
 	return msg
 
-
 def ofp_action_set_field(type, len, field):
 	if type is None:
-		type = 25
-	assert type == 25
+		type = OFPAT_SET_FIELD
+	assert type == OFPAT_SET_FIELD
 	
 	assert isinstance(field, str)
 	
@@ -354,11 +387,10 @@ def ofp_action_set_field(type, len, field):
 	
 	return _pack("HH", type, len) + field + '\0'*(len-filled_len)
 
-
-def ofp_action_experimenter(type, len, experimenter, data):
+def ofp_action_experimenter_(type, len, experimenter, data):
 	if type is None:
-		type = 0xFFFF
-	assert type == 0xFFFF
+		type = OFPAT_EXPERIMENTER
+	assert type == OFPAT_EXPERIMENTER
 	
 	assert isinstance(data, str)
 	
@@ -367,75 +399,59 @@ def ofp_action_experimenter(type, len, experimenter, data):
 	
 	return _pack("HHI", type, len, experimenter) + data + '\0'*(len-filled_len)
 
-
+# 7.3.1
 def ofp_switch_features(header, datapath_id, n_buffers, n_tables, auxiliary_id, capabilities):
-	if header is None:
-		header = ofp_header(4, OFPT_FEATURES_REPLY, 0, None)
-	msg = fix_ofp_header(5, _pack("8sQIBB2xII",
-		_obj(header),
+	msg = ofp_(header, _pack("QIBB2xII",
 		datapath_id,
 		n_buffers,
 		n_tables,
 		auxiliary_id,
 		capabilities,
-		0))
+		0), OFPT_FEATURES_REPLY)
 	assert _len(msg) == 32
 	return msg
 
-
 # 7.3.2
 def ofp_switch_config(header, flags, miss_send_len):
-	msg = fix_ofp_header(9, _pack("8sHH",
-		_obj(header),
+	msg = ofp_(header, _pack("HH",
 		flags,
-		miss_send_len))
+		miss_send_len), (OFPT_SET_CONFIG, OFPT_GET_CONFIG_REPLY))
 	assert _len(msg) == 12
 	return msg
 
-
 # 7.3.3
 def ofp_table_mod(header, table_id, config):
-	msg = fix_ofp_header(17, _pack("8sB3xI",
-		_obj(header),
+	msg = ofp_(header, _pack("B3xI",
 		table_id,
-		config))
+		config), OFPT_TABLE_MOD)
 	assert _len(msg) == 16
 	return msg
-
 
 # 7.3.4.1
 def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 		idle_timeout, hard_timeout, priority, buffer_id, out_port, out_group, flags,
 		match, instructions):
-	if isinstance(instructions. str):
+	if isinstance(instructions, str):
 		pass
-	elif isinstance(instructions, (list, tuple)):
+	elif isinstance(instructions, (tuple,list)):
 		instructions = "".join([_obj(i) for i in instructions])
 	elif instructions is None:
 		instructions = ""
 	else:
-		ValueError(instructions)
+		raise ValueError(instructions)
 	
-	msg = fix_ofp_header(14, _pack("8sQQBBHHHIIIH2x",
-		_obj(header),
-		cookie,
-		cookie_mask,
-		table_id,
-		command,
-		idle_timeout,
-		hard_timeout,
-		priority,
-		buffer_id,
-		out_port,
-		out_group,
-		flags)+_obj(match)+instructions)
+	msg = ofp_(header, _pack("BB2H2IH2x",
+		cookie, cookie_mask,
+		table_id, command,
+		idle_timeout, hard_timeout,
+		priority, buffer_id,
+		out_port, out_group,
+		flags)+obj(match)+instructions, 
+		OFPT_FLOW_MOD)
 	return msg
 
 # 7.3.4.2
 def ofp_group_mod(header, command, type, group_id, buckets):
-	if header is None:
-		header = ofp_header(4, OFPT_GROUP_MOD, 0, None)
-	
 	if isinstance(buckets, str):
 		pass
 	elif isinstance(buckets, (list, tuple)):
@@ -445,13 +461,10 @@ def ofp_group_mod(header, command, type, group_id, buckets):
 	else:
 		raise ValueError(buckets)
 	
-	msg = fix_ofp_header(15, _pack("8sHBxI",
-		_obj(header),
-		command,
-		type,
-		group_id)+buckets)
+	msg = ofp_(header,
+		_pack("HBxI", command, type, group_id)+buckets,
+		OFPT_GROUP_MOD)
 	return msg
-
 
 def ofp_bucket(len, weight, watch_port, watch_group, actions):
 	if isinstance(actions, str):
@@ -473,16 +486,11 @@ def ofp_bucket(len, weight, watch_port, watch_group, actions):
 		watch_group) + actions + '\0'*(len-filled_len)
 	return msg
 
-
 # 7.3.4.3
 def ofp_port_mod(header, port_no, hw_addr, config, mask, advertise):
-	msg = fix_ofp_header(16, _pack("8sI4x6s2xIII4x",
-		_obj(header),
-		port_no,
-		hw_addr,
-		config,
-		mask,
-		advertise))
+	msg = ofp_(header,
+		_pack("I4x6s2xIII4x", port_no, hw_addr, config, mask, advertise),
+		OFPT_PORT_MOD)
 	assert _len(msg)==40
 	return msg
 
@@ -510,11 +518,10 @@ def ofp_meter_band_header(type, len, rate, burst_size):
 	assert _len(msg) == 12
 	return msg
 
-
 def ofp_meter_band_drop(type, len, rate, burst_size):
 	if type is None:
-		type = 1
-	assert type == 1
+		type = OFPMBT_DROP
+	assert type == OFPMBT_DROP
 	
 	len = 16
 	
@@ -526,11 +533,10 @@ def ofp_meter_band_drop(type, len, rate, burst_size):
 	assert _len(msg) == 16
 	return msg
 
-
 def ofp_meter_band_dscp_remark(type, len, rate, burst_size, prec_level):
 	if type is None:
-		type = 2
-	assert type == 2
+		type = OFPMBT_DSCP_REMARK
+	assert type == OFPMBT_DSCP_REMARK
 	
 	len = 16
 	
@@ -543,11 +549,10 @@ def ofp_meter_band_dscp_remark(type, len, rate, burst_size, prec_level):
 	assert _len(msg) == 16
 	return msg
 
-
 def ofp_meter_band_experimenter(type, len, rate, burst_size, experimenter, data):
 	if type is None:
-		type = 0xFFFF
-	assert type == 0xFFFF
+		type = OFPMBT_EXPERIMENTER
+	assert type == OFPMBT_EXPERIMENTER
 	
 	assert isinstance(data, str)
 	
@@ -562,12 +567,8 @@ def ofp_meter_band_experimenter(type, len, rate, burst_size, experimenter, data)
 		experimenter) + data
 	return msg
 
-
 # 7.3.5
 def ofp_multipart_request(header, type, flags, body=None):
-	if header is None:
-		header = ofp_header(4, OFPT_MULTIPART_REQUEST, 0, None)
-	
 	if type in (OFPMP_DESC, OFPMP_TABLE, OFPMP_GROUP_DESC, 
 			OFPMP_GROUP_FEATURES, OFPMP_METER_FEATURES, OFPMP_PORT_DESC):
 		body = ""
@@ -585,30 +586,54 @@ def ofp_multipart_request(header, type, flags, body=None):
 		elif body is None:
 			body = []
 	
-	msg = fix_ofp_header(OFPT_MULTIPART_REQUEST, _pack("8sHH4x",
-		_obj(header),
-		type,
-		flags) + body)
+	msg = ofp_(header,
+		_pack("HH4x", type, flags) + body,
+		OFPT_MULTIPART_REQUEST)
 	return msg
-
 
 def ofp_multipart_reply(header, type, flags, body):
-	if header is None:
-		header = ofp_header(4, OFPT_MULTIPART_REPLY, 0, None)
+	if type in (OFPMP_DESC, OFPMP_AGGREGATE, OFPMP_GROUP_FEATURES,
+			OFPMP_METER_FEATURES):
+		if isinstance(body, (tuple,str)):
+			body = _obj(body)
+		elif body is None:
+			body = ""
+		else:
+			raise ValueError(body)
+	elif type in (OFPMP_FLOW, OFPMP_TABLE, OFPMP_PORT_STATS, OFPMP_QUEUE, 
+			OFPMP_GROUP, OFPMP_GROUP_DESC, OFPMP_METER, OFPMP_METER_CONFIG,
+			OFPMP_TABLE_FEATURES, OFPMP_PORT_DESC)
+		if isinstance(body, (list,tuple)):
+			body = "".join([_obj(b) for b in body])
+		elif body is None:
+			body = ""
+		else:
+			raise ValueError(body)
+	elif type == OFPMP_EXPERIMENTER:
+		if isinstance(body, str):
+			pass
+		else:
+			raise ValueError(body)
+	else:
+		raise ValueError(type)
 	
-	if body is None:
-		body = ""
-	assert isinstance(body, str)
-	
-	msg = fix_ofp_header(OFPT_MULTIPART_REPLY, _pack("8sHH4x",
-		_obj(header),
-		type,
-		flags) + body)
+	msg = ofp_(header,
+		_pack("HH4x", type, flags) + body,
+		OFPT_MULTIPART_REPLY)
 	return msg
-
 
 # 7.3.5.1
 def ofp_desc(mfr_desc, hw_desc, sw_desc, serial_num, dp_desc):
+	if mfr_desc is None:
+		mfr_desc = ""
+	if hw_desc is None:
+		hw_desc = ""
+	if sw_desc is None:
+		sw_desc = ""
+	if serial_num is None:
+		serial_num = ""
+	if dp_desc is None:
+		dp_desc = ""
 	msg = _pack("256s256s256s32s256s",
 		mfr_desc,
 		hw_desc,
@@ -618,15 +643,376 @@ def ofp_desc(mfr_desc, hw_desc, sw_desc, serial_num, dp_desc):
 	assert _len(msg) == 1056
 	return msg
 
-
 # 7.3.5.2
+def ofp_flow_stats_request(table_id, out_port, out_group, cookie, cookie_mask, match):
+	if table_id is None:
+		table_id = OFPTT_ALL
+	if out_port is None:
+		out_port = OFPP_ANY
+	if out_group is None:
+		out_group = OFPG_ANY
+	if cookie is None:
+		cookie = 0
+	if cookie_mask is None:
+		cookie_mask = 0
+	desc = _pack("B3xII4xQQ", table_id, out_port, out_group, cookie, cookie_mask)
+	assert _len(desc)==40
+	return desc+_obj(match)
 
-######################
-
-def ofp_hello(header, elements):
-	if header is None:
-		header = ofp_header(4, OFPT_HELLO, 0, None)
+def ofp_flow_stats(length, table_id, duration_sec, duration_nsec, priority,
+		idle_timeout, hard_timeout, flags, cookie, packet_count, byte_count,
+		match, instructions):
+	if instructions is None:
+		instructions = ""
+	elif isinstance(instructions, (list, tuple)):
+		instructions = "".join([_obj(i) for i in instructions])
+	elif isinstance(instructions, str):
+		pass
+	else:
+		raise ValueError(instructions)
 	
+	match = _obj(match)
+	
+	length = 48 + _len(match) + _len(instructions)
+	msg = _pack("HBxII4H4x3Q", length, table_id, duration_sec, duration_nsec,
+		priority, idle_timeout, hard_timeout, flags,
+		cookie, packet_count, byte_count)+match+instructions
+	assert _len(msg) == length
+	return msg
+
+# 7.3.5.3
+def ofp_aggregate_stats_request(table_id, out_port, out_group, cookie, cookie_mask, match):
+	if table_id is None:
+		table_id = OFPTT_ALL
+	if out_port is None:
+		out_port = OFPP_ANY
+	if out_group is None:
+		out_group = OFPG_ANY
+	if cookie is None:
+		cookie = 0
+	if cookie_mask is None:
+		cookie_mask = 0
+	desc = _pack("B3xII4xQQ", table_id, out_port, out_group, cookie, cookie_mask)
+	assert len(desc) == 40
+	return desc + _obj(match)
+
+def ofp_aggregate_stats_reply(packet_count, byte_count, flow_count):
+	return _pack("QQI4x", packet_count, byte_count, flow_count)
+
+# 7.3.5.4
+def ofp_table_stats(table_id, active_count, lookup_count, matched_count):
+	msg = _pack("B3xIQQ", table_id, active_count, lookup_count, matched_count)
+	assert _len(msg) == 24
+	return msg
+
+# 7.3.5.5.1
+def ofp_table_features(length, table_id, name, metadata_match, metadata_write, config, max_entries, properties):
+	if isinstance(properties, (list,tuple)):
+		properties = "".join([_obj(p) for p in properties])
+	elif isinstance(properties, str):
+		pass
+	elif properties is None:
+		properties = ""
+	else:
+		raise ValueError(properties)
+	
+	length = 64 + _len(properties)
+	
+	msg = _pack("HB5x32sQQII", length, table_id, name, metadata_match, metadata_write,
+		config, max_entries) + properties
+	assert _len(msg) == length
+	return msg
+
+# 7.3.5.5.2
+def ofp_table_feature_prop_header(type, length):
+	return _pack("HH", type, length)
+
+def ofp_table_feature_prop_instructions(type, length, instruction_ids):
+	if isinstance(instruction_ids, (list,tuple)):
+		instruction_ids = "".join([_obj(i) for i in instruction_ids])
+	elif isinstance(instruction_ids, str):
+		pass
+	elif instruction_ids is None:
+		instruction_ids = ""
+	else:
+		raise ValueError(instruction_ids)
+	
+	assert type in (OFPTFPT_INSTRUCTIONS, OFPTFPT_INSTRUCTIONS_MISS)
+	
+	length = 4 + _len(instruction_ids)
+	
+	return _pack("HH", type, length) + instruction_ids + '\0'*(_align(length)-length)
+
+def ofp_table_feature_prop_next_tables(type, length, next_table_ids):
+	if isinstance(next_table_ids, (list,tuple)):
+		next_table_ids = "".join([_obj(n) for n in next_table_ids])
+	elif isinstance(next_table_ids, str):
+		pass
+	elif next_table_ids is None:
+		next_table_ids = ""
+	else:
+		raise ValueError(next_table_ids)
+	
+	assert type in (OFPTFPT_NEXT_TABLES, OFPTFPT_NEXT_TABLES_MISS)
+	
+	length = 4 + _len(next_table_ids)
+	
+	return _pack("HH", type, length) + next_table_ids + '\0'*(_align(length)-length)
+
+def ofp_table_feature_prop_actions(type, length, action_ids):
+	if isinstance(action_ids, (list,tuple)):
+		action_ids = "".join([_obj(a) for a in action_ids])
+	elif isinstance(action_ids, str):
+		pass
+	elif action_ids is None:
+		action_ids = ""
+	else:
+		raise ValueError(action_ids)
+	
+	assert type in (OFPTFPT_WRITE_ACTIONS, OFPTFPT_WRITE_ACTIONS_MISS,
+		OFPTFPT_APPLY_ACTIONS, OFPTFPT_APPLY_ACTIONS_MISS)
+	
+	length = 4 + _len(action_ids)
+	
+	return _pack("HH", type, length) + action_ids + '\0'*(_align(length)-length)
+
+def ofp_table_feature_prop_oxm(type, length, oxm_ids):
+	if isinstance(oxm_ids, (list,tuple)):
+		oxm_ids = _pack("%dI" % len(oxm_ids), *oxm_ids)
+	elif isinstance(oxm_ids, str):
+		pass
+	elif oxm_ids is None:
+		oxm_ids = ""
+	else:
+		raise ValueError(oxm_ids)
+	
+	assert type in (OFPTFPT_MATCH, OFPTFPT_WILDCARDS, OFPTFPT_WRITE_SETFIELD, OFPTFPT_WRITE_SETFIELD_MISS, 
+		OFPTFPT_APPLY_SETFIELD, OFPTFPT_APPLY_SETFIELD_MISS)
+	
+	length = 4 + _len(oxm_ids)
+	
+	return _pack("HH", type, length) + oxm_ids + '\0'*(_align(length)-length)
+
+def ofp_table_feature_prop_experimenter(type, length, experimenter, exp_type, data):
+	assert isinsntace(data, str)
+	
+	length = 12 + _len(data)
+	
+	assert type in (OFPTFPT_EXPERIMENTER, OFPTFPT_EXPERIMENTER_MISS)
+	
+	return _pack("HHII", type, length, experimenter, exp_type) + data
+
+# 7.3.5.6
+def ofp_port_stats_request(port_no):
+	if port_no is None:
+		port_no = OFPP_ANY
+	return _pack("I4x", port_no)
+
+def ofp_port_stats(port_no, rx_packets, tx_packets, rx_bytes, tx_bytes, rx_dropped, tx_dropped,
+		rx_errors, tx_errors, rx_frame_err, rx_over_err, rx_crc_err,
+		collisions, duration_sec, duration_nsec):
+	return _pack("I4x12Q2I", port_no, rx_packets, tx_packets, rx_bytes, tx_bytes, rx_dropped, tx_dropped,
+		rx_errors, tx_errors, rx_frame_err, rx_over_err, rx_crc_err,
+		collisions, duration_sec, duration_nsec)
+
+# 7.3.5.8
+def ofp_queue_stats_request(port_no, queue_id):
+	if port_no is None:
+		port_no = OFPP_ANY
+	if queue_id is None:
+		queue_id = OFPQ_ALL
+	return _pack("II", port_no, queue_id)
+
+def ofp_queue_stats(port_no, queue_id, tx_bytes, tx_packets, tx_errors, duration_sec, duration_nsec):
+	return _pack("2I3Q2I", port_no, queue_id, tx_bytes, tx_packets, tx_errors, duration_sec, duration_nsec)
+
+# 7.3.5.9
+def ofp_group_stats_request(group_id):
+	if group_id is None:
+		group_id = OFPG_ALL
+	return _pack("I4x", group_id)
+
+def ofp_group_stats(length, group_id, ref_count, packet_count, byte_count,
+		duration_sec, duration_nsec, bucket_stats):
+	if isinstance(bucket_stats, (list,tuple)):
+		bucket_stats = "".join([_obj(b) for b in bucket_stats])
+	elif isinstance(bucket_stats, str):
+		pass
+	elif bucket_stats is None:
+		bucket_stats = ""
+	else:
+		raise ValueError(bucket_stats)
+	
+	length = 40 + _len(bucket_stats)
+	
+	return _pack("H2xII4xQQII", length, group_id, ref_count, packet_count, byte_count,
+		duration_sec, duration_nsec) + bucket_stats
+
+def ofp_bucket_counter(packet_count, byte_count):
+	return _pack("QQ", packet_count, byte_count)
+
+# 7.3.5.10
+def ofp_group_desc(length, type, group_id, buckets):
+	if isinstance(buckets, (list,tuple)):
+		buckets = "".join([_obj(b) for b in buckets])
+	elif isinstance(buckets, str):
+		pass
+	elif buckets is None:
+		buckets = ""
+	else:
+		raise ValueError(buckets)
+	
+	length = 8 + _len(buckets)
+	
+	return _pack("HBxI", length, type, group_id) + buckets
+
+# 7.3.5.11
+def ofp_group_features(types, capabilities, max_groups, actions):
+	if isinstance(max_groups, (list,tuple)):
+		max_groups = _pack("4I", *max_groups)
+	elif isinstance(max_groups, str):
+		assert len(max_groups) == 16
+	elif max_groups is None:
+		max_groups = '\0'*16
+	else:
+		raise ValueError(max_groups)
+	
+	if isinstance(actions, (list,tuple)):
+		actions = _pack("4I", *actions)
+	elif isinstance(actions, str):
+		assert len(actions) == 16
+	elif actions is None:
+		actions = '\0'*16
+	else:
+		raise ValueError(actions)
+	
+	return _pack("II", types, capabilities) + max_groups + actions
+
+# 7.3.5.12
+def ofp_meter_multipart_request(meter_id):
+	return _pack("I4x", meter_id)
+
+def ofp_meter_stats(meter_id, len, flow_count, packet_in_count, byte_in_count,
+		duration_sec, duration_nsec, band_stats)
+	if isinstance(band_stats, (list, tuple)):
+		band_stats = "".join([_obj(b) for b in band_stats])
+	elif isinstance(band_stats, str):
+		pass
+	elif band_stats is None:
+		band_stats = ""
+	else:
+		raise ValueError(band_stats)
+	
+	return _pack("IH6xIQQII", meter_id, len, flow_count, packet_in_count, byte_in_count,
+		duration_sec, duration_nsec) + band_stats
+
+def ofp_meter_band_stats(packet_band_count, byte_band_count):
+	return _pack("QQ", packet_band_count, byte_band_count)
+
+# 7.3.5.13
+def ofp_meter_config(length, flags, meter_id, bands):
+	if isinstance(bands, (list,tuple)):
+		bands = "".join([_obj(b) for b in bands])
+	elif isinstance(bands, str):
+		pass
+	elif bands is None:
+		bands = ""
+	else:
+		raise ValueError(bands)
+	
+	length = 8 + _len(bands)
+	
+	return _pack("HHI", length, flags, meter_id) + bands
+
+# 7.3.5.14
+def ofp_meter_features(max_meter, band_types, capabilities, max_bands, max_color):
+	return _pack("IIIBB2x", max_meter, band_types, capabilities, max_bands, max_color)
+
+# 7.3.5.15
+def ofp_experimenter_multipart_header(experimenter, exp_type):
+	return _pack("II", experimenter, exp_type)
+
+# XXX
+
+# 7.3.6
+def ofp_queue_get_config_request(header, port):
+	return ofp_(header,
+		_pack("I4x", port),
+		OFPT_QUEUE_GET_CONFIG_REQUEST)
+
+def ofp_queue_get_config_reply(header, port, queues):
+	if isinstance(queues, (list,tuple)):
+		queues = "".join([_obj(q) for q in queues])
+	elif queues is str:
+		pass
+	elif queues is None:
+		queues = ""
+	else:
+		raise ValueError(queues)
+	
+	return ofp_(header,
+		_pack("I4x", port) + queues,
+		OFPT_QUEUE_GET_CONFIG_REPLY)
+
+# 7.3.7
+def ofp_packet_out(header, buffer_id, in_port, actions_len, actions, data):
+	if isinstance(actions, (list,tuple)):
+		actions = "".join([_obj(a) for a in actions])
+	elif isinstance(actions, str):
+		pass
+	elif actions is None:
+		actions = ""
+	else:
+		raise ValueError(actions)
+	
+	actions_len = _len(actions)
+	
+	return ofp_(header,
+		_pack("IIH6x", buffer_id, in_port, actions_len) + actions + data,
+		OFPT_PACKET_OUT)
+
+# 7.3.9
+def ofp_role_request(header, role, generation_id):
+	return ofp_(header,
+		_pack("I4xQ", role, generation_id),
+		(OFPT_ROLE_REQUEST, OFPT_ROLE_REPLY))
+
+# 7.3.10
+def ofp_async_config(header, packet_in_mask, port_status_mask, flow_removed_mask):
+	return ofp_(header,
+		_pack("6I", *packet_in_mask, *port_status_mask, *flow_removed_mask),
+		(OFPT_GET_ASYNC_REPLY, OFPT_SET_ASYNC))
+
+# 7.4.1
+def ofp_packet_in(header, buffer_id, total_len, reason, table_id, cookie, match, data):
+	return ofp_(header,
+		_pack("IHBBQ", buffer_id, total_len, reason, table_id, cookie) + _obj(match) + "\0"*2 + data,
+		OFPT_PACKET_IN)
+
+# 7.4.2
+def ofp_flow_removed(header, cookie, priority, reason, table_id,
+		duration_sec, duration_nsec, idle_timeout, hard_timeout,
+		packet_count, byte_count, match):
+	return ofp_(header,
+		_pack("QHBBIIHHQQ", cookie, priority, reason, table_id,
+			duration_sec, duration_nsec, idle_timeout, hard_timeout,
+			packet_count, byte_count) + _obj(match),
+		OFPT_FLOW_REMOVED)
+
+# 7.4.3
+def ofp_port_status(header, reason, desc):
+	return ofp_(header,
+		_pack("B7x", reason) + _obj(desc),
+		OFP_PORT_STATUS)
+
+# 7.4.4
+def ofp_error_msg(header, type, code, data):
+	return ofp_(header,
+		_pack("HH", type, code)+data,
+		OFPT_ERROR)
+
+# 7.5.1
+def ofp_hello(header, elements):
 	if isinstance(elements, str):
 		pass
 	elif isinstance(elements, (tuple, list)):
@@ -636,20 +1022,10 @@ def ofp_hello(header, elements):
 	else:
 		raise ValueError(elements)
 	
-	return fix_ofp_header(OFPT_HELLO, _obj(header)+elements)
-
+	return ofp_(header, elements, OFPT_HELLO)
 
 def ofp_hello_elem_header(type, length):
 	return _pack("HH", type, length)
-
-
-def ofp_hello_elem_unknown_(type, length, data):
-	assert isinstance(data, str)
-	
-	length = 4 + _len(data)
-	
-	return _pack("HH", type, length)+data
-
 
 def ofp_hello_elem_versionbitmap(type, length, bitmaps):
 	if type is None:
@@ -669,47 +1045,9 @@ def ofp_hello_elem_versionbitmap(type, length, bitmaps):
 	
 	return struct.pack("!HH", type, length) + bitmaps + '\0'*(_align(length)-length)
 
-
-def ofp_table_mod(header, table_id, config):
-	msg = fix_ofp_header("".join([
-		_obj(header), 
-		_int("B", table_id),
-		'\0'*3,
-		_int("I", config)
-		]))
-	assert _len(msg) == 16
-	return msg
-
-def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
-		idle_timeout, hard_timeout, priority, buffer_id,
-		out_port, out_group, flags, match, instructions):
-	if isinstance(instructions, str):
-		pass
-	elif isinstance(instructions, (tuple,list)):
-		instructions = "".join([_obj(i) for i in instructions])
-	elif instructions is None:
-		instructions = ""
-	else:
-		raise ValueError(instructions)
-	
-	msg = fix_ofp_header(14, "".join([
-		_obj(header),
-		_int("Q", cookie),
-		_int("Q", cookie_mask),
-		_int("B", table_id),
-		_int("B", command),
-		_int("H", idle_timeout),
-		_int("H", hard_timeout),
-		_int("H", priority),
-		_int("I", buffer_id),
-		_int("I", out_port),
-		_int("I", out_group),
-		_int("H", flags),
-		'\0'*2,
-		_obj(match)
-		]) + instructions)
-	return msg
-
-def ofp_group_stats_request(group_id):
-	return _pack("I4x", group_id)
+# 7.5.4
+def ofp_experimenter_header(header, experimenter, exp_type, data):
+	return ofp_(header,
+		_pack("II", experimenter, exp_type) + data,
+		OFPT_EXPERIMENTER)
 
