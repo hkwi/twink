@@ -5,7 +5,6 @@ import os
 import os.path
 from twink import *
 from gevent import spawn
-from gevent.pool import Pool
 from gevent.event import Event, AsyncResult
 from gevent.queue import Queue
 from gevent.server import StreamServer, DatagramServer
@@ -342,7 +341,9 @@ class PortMonitorContext(object):
 				ports = self.multi[xid]
 				offset = 16
 				while offset < length:
-					ports.append(struct.unpack_from(ofp_port, message, offset=offset))
+					port = list(struct.unpack_from(ofp_port, message, offset=offset))
+					port[2] = port[2].partition('\0')[0]
+					ports.append(port)
 					offset += struct.calcsize(ofp_port)
 				
 				if not flags&1:
@@ -355,7 +356,9 @@ class PortMonitorContext(object):
 			offset = struct.calcsize(fmt+"II")
 			ports = []
 			while offset < length:
-				ports.append(struct.unpack_from(ofp_port, message, offset=offset))
+				port = list(struct.unpack_from(ofp_port, message, offset=offset))
+				port[2] = port[2].partition('\0')[0]
+				ports.append(port)
 				offset += struct.calcsize(ofp_port)
 			self.ports = ports
 			self.ports_init.set()
@@ -365,6 +368,7 @@ class PortMonitorContext(object):
 
 
 class PortMonitorChannel(ControllerChannel):
+	''' Monitors openflow switch port changes. '''
 	def __init__(self, *args, **kwargs):
 		super(PortMonitorChannel, self).__init__(*args, **kwargs)
 		self._port_monitor = PortMonitorContext()
@@ -393,6 +397,7 @@ class PortMonitorChannel(ControllerChannel):
 
 
 class ProxyChannel(Channel):
+	'''accepts controller connection and proxies it to upstream switch'''
 	def to_downstream(self, message, channel):
 		self.send(message, None)
 	
@@ -403,21 +408,72 @@ class ProxyChannel(Channel):
 	def on_message(self, message):
 		super(ProxyChannel, self).on_message(message)
 		if ord(message[1]) != 0: # no HELLO
-			self.upstream.send(message, self.to_downstream)
+			return self.upstream.send(message, self.to_downstream)
+
+
+class PassiveChannel(Channel):
+	'''accepts monitor controller connection and proxies down messages from upstream switch'''
+	hello = False
+	def to_downstream(self, message, channel):
+		if self.hello:
+			self.send(message, None)
+	
+	def send(self, message, message_handler):
+		super(PassiveChannel, self).send(message, message_handler)
+		self.direct_send(message)
+	
+	def on_message(self, message):
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		if oftype==0:
+			self.hello = True
+		
+		if super(PassiveChannel, self).on_message(message):
+			return True
+		# Clients are not allowed to send requests to upstream
+		if oftype!=0:
+			self.send(struct.pack("!BBHIHH", self.version, 1, 12, xid, 1, 5), None)
+			self.close()
 	
 	@property
 	def unix_path(self):
 		return self.context.proxy_path
 
 
-class UnixProxyContext(object):
+class ContextChannel(Channel):
+	@property
+	def unix_path(self):
+		return self.context.proxy_path
+
+
+class RegisterBackChannel(ContextChannel):
+	def __init__(self, *args, **kwargs):
+		self.registry.append(self)
+		super(RegisterBackChannel, self).__init__(*args, **kwargs)
+	
+	def close(self):
+		if self in self.registry:
+			self.registry.remove(self)
+		super(RegisterBackChannel, self).close()
+	
+	@property
+	def unix_path(self):
+		return self.context.proxy_path
+
+
+class UnixContext(object):
+	channel_parents = (StreamChannel,)
+	suffix = "sock"
 	server = None
 	proxy_path = None
 	proxy_sock = None
+	
 	def __init__(self, parent, **kwargs):
 		self.parent = parent
 		self.backlog = kwargs.get("backlog", 50)
 		self.socket_dir = kwargs.get("socket_dir")
+	
+	def channel_args(self):
+		return {"accept_versions": [self.parent.version,]}
 	
 	def start_proxy(self):
 		self.proxy_sock = proxy_sock = socket(AF_UNIX, SOCK_STREAM)
@@ -425,9 +481,8 @@ class UnixProxyContext(object):
 		proxy_sock.bind(self.proxy_path)
 		proxy_sock.listen(self.backlog)
 		self.server = serv = StreamServer(proxy_sock, handle=StreamHandler(
-			channel_cls=type("UnixProxy", (StreamChannel, ProxyChannel, LoggingChannel),
-				{"accept_versions": [self.parent.version,], "upstream":self.parent, "context":self }),
-			message_handler=self.proxy_handler))
+			channel_cls=type("UnixChannel", self.channel_parents, self.channel_args())),
+			spawn=100)
 		serv.start()
 	
 	def socket_path(self, path):
@@ -438,48 +493,99 @@ class UnixProxyContext(object):
 	def sync(self):
 		# PID is used to escape the conflict in case accidentally multiple connection was opened
 		# for the same datapath in different process
-		old = self.socket_path("unknown-%x.datapath" % os.getpid())
+		old = self.socket_path("unknown-%x.%s" % (os.getpid(), self.suffix))
 		if self.parent.datapath:
-			new = self.socket_path("%x-%x.datapath" % (self.parent.datapath, os.getpid()))
+			new = self.socket_path("%x-%x.%s" % (self.parent.datapath, os.getpid(), self.suffix))
 			if self.proxy_path and self.proxy_path == old:
 				os.rename(old, new)
 				self.proxy_path = new
 			return new
 		return old
 	
-	def proxy_handler(self, message, channel):
-		import binascii
-		print binascii.b2a_hex(message), channel, "to downstream"
-		
-		raise CallbackDeadError("Downstream won't respond")
-	
 	def close(self):
 		if self.server:
-			self.server.stop()
+			self.server.stop() # XXX: this does not close jackin connections
 		if self.proxy_sock:
 			self.proxy_sock.close()
 		if self.proxy_path:
 			os.remove(self.proxy_path)
 
 
-class UnixProxyChannel(Channel):
+class JackinContext(UnixContext):
+	channel_parents = (StreamChannel, ProxyChannel, ContextChannel, LoggingChannel)
+	suffix = "jackin"
+	
+	def channel_args(self):
+		return {
+			"accept_versions": [self.parent.version,],
+			"context":self,
+			"upstream":self.parent
+			}
+
+
+class JackinChannel(Channel):
 	def __init__(self, *args, **kwargs):
-		super(UnixProxyChannel, self).__init__(*args, **kwargs)
-		self._proxy = UnixProxyContext(self, **kwargs)
+		super(JackinChannel, self).__init__(*args, **kwargs)
+		self._jackin = JackinContext(self, **kwargs)
 	
 	def close(self):
-		self._proxy.close()
-		super(UnixProxyChannel, self).close()
+		self._jackin.close()
+		super(JackinChannel, self).close()
 	
 	def on_message(self, message):
-		if super(UnixProxyChannel, self).on_message(message):
+		if super(JackinChannel, self).on_message(message):
 			return True
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype==0: # HELLO
-			self._proxy.start_proxy()
+			self._jackin.start_proxy()
 		elif oftype==6: # FEATURE
-			self._proxy.sync()
+			self._jackin.sync()
+
+
+class MonitorContext(UnixContext):
+	channel_parents = (StreamChannel, PassiveChannel, RegisterBackChannel, ContextChannel, LoggingChannel)
+	suffix = "monitor"
+	
+	def __init__(self, parent, **kwargs):
+		super(MonitorContext, self).__init__(parent, **kwargs)
+		self.monitor_channels = []
+	
+	def channel_args(self):
+		return {
+			"accept_versions": [self.parent.version,],
+			"context":self,
+			"registry":self.monitor_channels
+			}
+	
+	def notify(self, message):
+		for channel in self.monitor_channels:
+			channel.send(message, None)
+
+
+class MonitorChannel(Channel):
+	def __init__(self, *args, **kwargs):
+		super(MonitorChannel, self).__init__(*args, **kwargs)
+		self._monitor = MonitorContext(self, **kwargs)
+	
+	def close(self):
+		self._monitor.close()
+		super(MonitorChannel, self).close()
+	
+	def on_message(self, message):
+		self._monitor.notify(message)
+		if super(MonitorChannel, self).on_message(message):
+			return True
+		
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		if oftype==0: # HELLO
+			self._monitor.start_proxy()
+		elif oftype==6: # FEATURE
+			self._monitor.sync()
+	
+	@property
+	def unix_path(self):
+		return self._monitor.proxy_path
 
 
 class PingingChannel(Channel):
@@ -528,19 +634,19 @@ if __name__=="__main__":
 					print e
 		return ret
 	
-	pool = Pool(10000) # use spawn=pool kwarg to make sure Channel.close called.
 	logging.basicConfig(level=logging.DEBUG)
 	address = ("0.0.0.0", 6633)
+	# use spawn=pool or spawn=int kwarg to make sure Channel.close called.
 	tcpserv = StreamServer(address, handle=StreamHandler(
 		channel_cls=type("SChannel",
-			(StreamChannel, PortMonitorChannel, SyncChannel, PingingChannel, UnixProxyChannel, LoggingChannel),
+			(StreamChannel, PortMonitorChannel, SyncChannel, PingingChannel, JackinChannel, MonitorChannel, LoggingChannel),
 			{"accept_versions": [1, 4]}),
 		message_handler=message_handler),
-		spawn = pool)
+		spawn = 1000 )
 	udpserv = OpenflowDatagramServer(address,
 		channel_cls=type("DChannel",
-			(DatagramChannel, PortMonitorChannel, SyncChannel, PingingChannel, UnixProxyChannel, LoggingChannel),
+			(DatagramChannel, PortMonitorChannel, SyncChannel, PingingChannel, JackinChannel, MonitorChannel, LoggingChannel),
 			{"accept_versions": [1, 4]}),
 		message_handler=message_handler,
-		spawn = pool)
+		spawn = 1000 )
 	serve_forever(tcpserv, udpserv)
