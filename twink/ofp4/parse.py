@@ -75,13 +75,13 @@ def parse(message, offset=0):
 		return ofp_multipart_request(message, cursor)
 	elif header.type == OFPT_MULTIPART_REPLY:
 		return ofp_multipart_reply(message, cursor)
-	elif header.type == OFPT_EXPERIMETER:
+	elif header.type == OFPT_EXPERIMENTER:
 		return ofp_experimenter_(message, cursor)
 	elif header.type == OFPT_QUEUE_GET_CONFIG_REQUEST:
 		return ofp_queue_get_config_request(message, cursor)
 	elif header.type == OFPT_QUEUE_GET_CONFIG_REPLY:
 		return ofp_queue_get_config_reply(message, cursor)
-	elif header.type in (OFPT_SET_ASYNC_REQUEST, OFPT_GET_ASYNC_REPLY):
+	elif header.type in (OFPT_SET_ASYNC, OFPT_GET_ASYNC_REPLY):
 		return ofp_async_config(message, cursor)
 	elif header.type == OFPT_METER_MOD:
 		return ofp_meter_mod(message, cursor)
