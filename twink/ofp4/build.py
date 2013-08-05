@@ -53,7 +53,7 @@ def ofp_(header, data, type=None):
 		else:
 			raise ValueError(type)
 	elif isinstance(header, tuple):
-		(version, oftype, length, xid) = *header
+		(version, oftype, length, xid) = header
 		if isinstance(type, int):
 			if oftype is None:
 				oftype = type
@@ -143,7 +143,7 @@ def ofp_queue_prop_(prop_header, data, type=None):
 		else:
 			raise ValueError(type)
 	elif isinstance(prop_header, (list, tuple)):
-		(property,len) = *prop_header
+		(property,len) = prop_header
 		if isinstance(type, int):
 			if property is None:
 				property = type
@@ -309,8 +309,8 @@ def ofp_action_group(type, len, group_id):
 
 def ofp_action_set_queue(type, len, queue_id):
 	if type is None:
-		type = OFPAT_SET_QUEUE.
-	assert type == OFPAT_SET_QUEUE.
+		type = OFPAT_SET_QUEUE
+	assert type == OFPAT_SET_QUEUE
 	
 	len = 8
 	
@@ -602,7 +602,7 @@ def ofp_multipart_reply(header, type, flags, body):
 			raise ValueError(body)
 	elif type in (OFPMP_FLOW, OFPMP_TABLE, OFPMP_PORT_STATS, OFPMP_QUEUE, 
 			OFPMP_GROUP, OFPMP_GROUP_DESC, OFPMP_METER, OFPMP_METER_CONFIG,
-			OFPMP_TABLE_FEATURES, OFPMP_PORT_DESC)
+			OFPMP_TABLE_FEATURES, OFPMP_PORT_DESC):
 		if isinstance(body, (list,tuple)):
 			body = "".join([_obj(b) for b in body])
 		elif body is None:
@@ -893,7 +893,7 @@ def ofp_meter_multipart_request(meter_id):
 	return _pack("I4x", meter_id)
 
 def ofp_meter_stats(meter_id, len, flow_count, packet_in_count, byte_in_count,
-		duration_sec, duration_nsec, band_stats)
+		duration_sec, duration_nsec, band_stats):
 	if isinstance(band_stats, (list, tuple)):
 		band_stats = "".join([_obj(b) for b in band_stats])
 	elif isinstance(band_stats, str):
@@ -980,7 +980,7 @@ def ofp_role_request(header, role, generation_id):
 # 7.3.10
 def ofp_async_config(header, packet_in_mask, port_status_mask, flow_removed_mask):
 	return ofp_(header,
-		_pack("6I", *packet_in_mask, *port_status_mask, *flow_removed_mask),
+		_pack("6I", *packet_in_mask + port_status_mask + flow_removed_mask),
 		(OFPT_GET_ASYNC_REPLY, OFPT_SET_ASYNC))
 
 # 7.4.1
