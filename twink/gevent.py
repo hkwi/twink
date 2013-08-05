@@ -509,6 +509,7 @@ class UnixContext(object):
 			self.proxy_sock.close()
 		if self.proxy_path:
 			os.remove(self.proxy_path)
+			self.proxy_path = None
 
 
 class JackinContext(UnixContext):
