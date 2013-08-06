@@ -60,8 +60,9 @@ class OvsChannel(Channel):
 		server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		server_socket.bind(("127.0.0.1", 0))
 		server = StreamServer(server_socket, handle=StreamHandler(
-			accept_versions=set([self.version]),
-			channel_cls=ProxySwitchChannel,
+			channel_cls=type("OvsProxy", (ProxySwitchChannel,), {
+				"accept_versions": set([self.version]),
+				}),
 			message_handler=ProxyMessageHandler(upstream=self)))
 		server_socket.listen(1)
 		server.start()
@@ -151,11 +152,11 @@ if __name__=="__main__":
 	tcpserv = StreamServer(address, handle=StreamHandler(
 		channel_cls = type("SChannel",
 			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 
-			{"accept_versions":[1]}),
+			{"accept_versions":[1,4]}),
 		message_handler = message_handler))
 	udpserv = OpenflowDatagramServer(address, 
 		channel_cls = type("DChannel",
 			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 
-			{"accept_versions":[1]}),
+			{"accept_versions":[1,4]}),
 		message_handler = message_handler)
 	serve_forever(tcpserv, udpserv)
