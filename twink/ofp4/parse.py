@@ -188,7 +188,7 @@ def ofp_match(message, offset):
 	offset = cursor.offset
 	
 	(type,length) = _unpack("HH", message, cursor)
-	oxm_fields = message[cursor.offset:offset+length-4]
+	oxm_fields = message[cursor.offset:offset+length]
 	cursor.offset = offset+_align(length)
 	return namedtuple("ofp_match",
 		"type length oxm_fields")(type,length,oxm_fields)
