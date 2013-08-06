@@ -209,15 +209,15 @@ def ofp_instruction_(message, offset):
 	
 	(type, len) = ofp_instruction(message, cursor.offset)
 	if type == OFPIT_GOTO_TABLE:
-		instructions.append(ofp_instruction_goto_table(message, cursor))
+		return ofp_instruction_goto_table(message, cursor)
 	elif type == OFPIT_WRITE_METADATA:
-		instructions.append(ofp_instruction_write_metadata(message, cursor))
+		return ofp_instruction_write_metadata(message, cursor)
 	elif type in (OFPIT_WRITE_ACTIONS, OFPIT_APPLY_ACTIONS, OFPIT_CLEAR_ACTIONS):
-		instructions.append(ofp_instruction_actions(message, cursor))
+		return ofp_instruction_actions(message, cursor)
 	elif type == OFPIT_METER:
-		instructions.append(ofp_instruction_meter(message, cursor))
+		return ofp_instruction_meter(message, cursor)
 	elif type == OFPIT_EXPERIMENTER:
-		instructions.append(ofp_instruction_experimenter(message, cursor))
+		return ofp_instruction_experimenter(message, cursor)
 	else:
 		raise ValueError(ofp_instruction(message, cursor.offset))
 

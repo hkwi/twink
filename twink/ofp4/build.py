@@ -186,6 +186,9 @@ def ofp_queue_prop_experimenter(prop_header, experimenter, data):
 
 # 7.2.3.1
 def ofp_match(type, length, oxm_fields):
+	if type is None:
+		type = OFPMT_OXM
+	
 	if isinstance(oxm_fields, str):
 		pass
 	elif isinstance(oxm_fields, (list, tuple)):
@@ -655,8 +658,10 @@ def ofp_flow_stats_request(table_id, out_port, out_group, cookie, cookie_mask, m
 		cookie = 0
 	if cookie_mask is None:
 		cookie_mask = 0
+	if match is None:
+		match = ofp_match(None, None, [])
 	desc = _pack("B3xII4xQQ", table_id, out_port, out_group, cookie, cookie_mask)
-	assert _len(desc)==40
+	assert _len(desc)==32
 	return desc+_obj(match)
 
 def ofp_flow_stats(length, table_id, duration_sec, duration_nsec, priority,
