@@ -315,13 +315,13 @@ class PortMonitorContext(object):
 			if self.ports_init.is_set():
 				assert hit
 			if hit:
-				assert len(hit) == 0
+				assert len(hit) == 1
 				ports.remove(hit.pop())
 		elif reason==2: # MODIFY
 			if self.ports_init.is_set():
 				assert hit
 			if hit:
-				assert len(hit) == 0
+				assert len(hit) == 1
 				ports.remove(hit.pop())
 			ports.append(port)
 		else:
