@@ -455,6 +455,10 @@ def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 
 # 7.3.4.2
 def ofp_group_mod(header, command, type, group_id, buckets):
+	'''
+	command = OFPGC_ADD/MODIFY/DELETE
+	type = OFPGT_ALL/SELECT/INDIRECT/FF
+	'''
 	if isinstance(buckets, str):
 		pass
 	elif isinstance(buckets, (list, tuple)):
