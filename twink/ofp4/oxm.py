@@ -40,12 +40,12 @@ ofp_ipv6exthdr_flags = type("ofp_ipv6exthdr_flags", (_enum_base,), {
 def _bits(oxm_field):
 	if oxm_field in (OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT):
 		bits = "I"
-	elif oxm_field in (OXM_OF_METADATA, OXM_OF_TUNNEL_ID):
+	elif oxm_field in (OXM_METADATA, OXM_TUNNEL_ID):
 		bits = "Q"
-	elif oxm_field in (OXM_OF_ETH_DST, OXM_OF_ETH_SRC, OXM_OF_ARP_SHA, OXM_OF_ARP_THA,
+	elif oxm_field in (OXM_ETH_DST, OXM_ETH_SRC, OXM_OF_ARP_SHA, OXM_OF_ARP_THA,
 			OXM_OF_IPV6_ND_SLL, OXM_OF_IPV6_ND_TLL):
 		bits = "6s"
-	elif oxm_field in (OXM_OF_ETH_TYPE, OXM_OF_VLAN_VID,
+	elif oxm_field in (OXM_ETH_TYPE, OXM_OF_VLAN_VID,
 			OXM_OF_TCP_SRC, OXM_OF_TCP_DST, OXM_OF_UDP_SRC, OXM_OF_UDP_DST,
 			OXM_OF_SCTP_SRC, OXM_OF_SCTP_DST, OXM_OF_ARP_OP, OXM_OF_IPV6_EXTHDR):
 		bits = "H"
