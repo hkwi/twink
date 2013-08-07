@@ -110,7 +110,16 @@ class ServerHandler(object):
 class StreamHandler(ServerHandler):
 	def __call__(self, socket, address):
 		assert issubclass(self.channel_cls, StreamChannel)
-		channel = self.channel_cls(socket=socket)
+		try:
+			channel = self.channel_cls(socket=socket)
+		except ChannelClose as e:
+			logging.info(e)
+			socket.close()
+			return
+		except:
+			logging.info("unhandled error", exc_info=True)
+			socket.close()
+			return
 		
 		channel.send(hello(channel.accept_versions), self.message_handler)
 		
@@ -128,9 +137,14 @@ class StreamHandler(ServerHandler):
 	def channel_message(self, channel, message):
 		try:
 			channel.on_message(message)
-		except:
-			logging.error("message_handler failed", exc_info=True)
+		except ChannelClose as e:
+			logging.info(e)
 			channel.close()
+			return
+		except:
+			logging.info("message_handler failed", exc_info=True)
+			channel.close()
+			return
 
 
 class OpenflowDatagramServer(DatagramServer, ServerHandler):
@@ -609,6 +623,9 @@ class PingingChannel(Channel):
 		self._ping.set()
 		super(PingingChannel, self).close()
 
+class ChannelClose(Exception):
+	# to normally close the channel by raising an exception
+	pass
 
 def serve_forever(*servers, **opts):
 	for server in servers:
