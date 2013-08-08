@@ -186,6 +186,8 @@ def ofp_queue_prop_experimenter(prop_header, experimenter, data):
 
 # 7.2.3.1
 def ofp_match(type, length, oxm_fields):
+	'''type: OFPMT_STANDARD/OXM
+	'''
 	if type is None:
 		type = OFPMT_OXM
 	
@@ -234,6 +236,8 @@ def ofp_instruction_write_metadata(type, len, metadata, metadata_mask):
 	return msg
 
 def ofp_instruction_actions(type, len, actions):
+	'''type: OFPIT_WRITE_ACTIONS/APPLY_ACTIONS/CLEAR_ACTIONS
+	'''
 	if isinstance(actions, str):
 		pass
 	elif isinstance(actions, (tuple, list)):
@@ -282,6 +286,8 @@ def ofp_action_header(type, len):
 	return _pack("HH4x", type, len)
 
 def ofp_action_output(type, len, port, max_len):
+	'''max_len: OFP_CML_MAX/NO_BUFFER
+	'''
 	if type is None:
 		type = OFPAT_OUTPUT
 	assert type == OFPAT_OUTPUT
@@ -353,6 +359,8 @@ def ofp_action_nw_ttl(type, len, nw_ttl):
 	return msg
 
 def ofp_action_push(type, len, ethertype):
+	'''type: OFPAT_PUSH_VLAN/PUSH_MPLS/PUSH_PBB
+	'''
 	assert type in (OFPAT_PUSH_VLAN, OFPAT_PUSH_MPLS, OFPAT_PUSH_PBB)
 	
 	len = 8
@@ -385,7 +393,7 @@ def ofp_action_set_field(type, len, field):
 	
 	assert isinstance(field, str)
 	
-	filled_len = 4 + len(field)
+	filled_len = 4 + _len(field)
 	len = _align(filled_len)
 	
 	return _pack("HH", type, len) + field + '\0'*(len-filled_len)
@@ -434,6 +442,8 @@ def ofp_table_mod(header, table_id, config):
 def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 		idle_timeout, hard_timeout, priority, buffer_id, out_port, out_group, flags,
 		match, instructions):
+	'''command=OFPFC_ADD/MODIFY/MODIFY_STRICT/DELETE/DELETE_STRICT
+	'''
 	if isinstance(instructions, str):
 		pass
 	elif isinstance(instructions, (tuple,list)):
@@ -443,13 +453,13 @@ def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 	else:
 		raise ValueError(instructions)
 	
-	msg = ofp_(header, _pack("BB2H2IH2x",
+	msg = ofp_(header, _pack("QQBB3H3IH2x",
 		cookie, cookie_mask,
 		table_id, command,
 		idle_timeout, hard_timeout,
 		priority, buffer_id,
 		out_port, out_group,
-		flags)+obj(match)+instructions, 
+		flags)+_obj(match)+instructions, 
 		OFPT_FLOW_MOD)
 	return msg
 
@@ -973,6 +983,13 @@ def ofp_packet_out(header, buffer_id, in_port, actions_len, actions, data):
 		actions = ""
 	else:
 		raise ValueError(actions)
+	
+	if isinstance(data, str):
+		pass
+	elif data is None:
+		data = ""
+	else:
+		raise ValueError(data)
 	
 	actions_len = _len(actions)
 	

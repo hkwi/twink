@@ -319,7 +319,7 @@ def ofp_action_set_field(message, offset):
 	cursor = _cursor(offset)
 	offset = cursor.offset
 	
-	(type,len) = ofp_action_header(message, offset)
+	(type,len) = ofp_action_header(message, cursor)
 	field = message[cursor.offset:offset+len]
 	cursor.offset = offset+len
 	return namedtuple("ofp_action_set_field",
