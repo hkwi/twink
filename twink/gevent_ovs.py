@@ -56,6 +56,9 @@ class OvsChannel(Channel):
 	def add_flow(self, flow):
 		return self.ofctl("add-flow", flow)
 	
+	def mod_flows(self, flow, strict=False):
+		return self.ofctl("mod-flows", flow, strict=strict)
+	
 	def ofctl(self, action, *args, **options):
 		server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		server_socket.bind(("127.0.0.1", 0))
