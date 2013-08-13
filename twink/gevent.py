@@ -17,7 +17,8 @@ class StreamChannel(Channel):
 		# put the vars required for __repr__ before calling super()
 		self.socket = kwargs["socket"]
 		self.sockfamily = self.socket.family
-		self.sockinfo = self.socket.getsockname() + self.socket.getpeername()
+		self.sockname = self.socket.getsockname()
+		self.peername = self.socket.getpeername()
 		super(StreamChannel, self).__init__(*args, **kwargs)
 	
 	def direct_send(self, message):
@@ -33,7 +34,7 @@ class StreamChannel(Channel):
 	
 	def __repr__(self):
 		if self.sockfamily in (AF_INET, AF_INET6):
-			return "tcp %s:%d-%s:%d" % self.sockinfo
+			return "tcp %s:%d-%s:%d" % (self.sockname[0:2]+self.peername[0:2])
 		elif self.sockfamily == AF_UNIX:
 			return "unix %s-%x" % (self.unix_path, id(self))
 		else:
