@@ -261,7 +261,7 @@ def ofp_instruction_experimenter(message, offset):
 # 7.2.5
 def ofp_action_header(message, offset):
 	return namedtuple("ofp_action_header",
-		"type,len")(*_unpack("HH4x", message, offset))
+		"type,len")(*_unpack("HH", message, offset))
 
 def ofp_action_(message, offset):
 	cursor = _cursor(offset)
@@ -384,10 +384,10 @@ def ofp_flow_mod(message, offset):
 	return namedtuple("ofp_flow_mod",
 		'''header,cookie,cookie_mask,table_id,command,
 		idle_timeout,hard_timeout,priority,
-		buffer_id,out_port,out_group,flags,instructions''')(
+		buffer_id,out_port,out_group,flags,match,instructions''')(
 		header,cookie,cookie_mask,table_id,command,
 		idle_timeout,hard_timeout,priority,
-		buffer_id,out_port,out_group,flags,instructions)
+		buffer_id,out_port,out_group,flags,match,instructions)
 
 # 7.3.4.2
 def ofp_group_mod(message, offset):

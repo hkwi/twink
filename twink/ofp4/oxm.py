@@ -101,8 +101,8 @@ def build(oxm_class, oxm_field, oxm_hasmask, oxm_length, oxm_value, oxm_mask=Non
 				break
 	
 	if oxm_mask:
-		oxm_length = struct.calcsize(bits*2)
+		oxm_length = struct.calcsize("!"+bits*2)
 		return struct.pack("!HBB"+bits*2, oxm_class, (oxm_field<<1)+oxm_hasmask, oxm_length, oxm_value, oxm_mask)
 	else:
-		oxm_length = struct.calcsize(bits)
+		oxm_length = struct.calcsize("!"+bits)
 		return struct.pack("!HBB"+bits, oxm_class, (oxm_field<<1)+oxm_hasmask, oxm_length, oxm_value)
