@@ -514,7 +514,7 @@ def ofptuple(etherframe):
 	transport_src_port_or_icmp_type = None
 	transport_dst_port_or_icmp_code = None
 	if ethernet_type == 0x0800: # IP
-		(u1, ip_tos, u2, ip_protocol, u3, ip_src, ip_dst, src_port, dst_port) = struct.unpack_from("!sB7sB2s4s4sHH", etherframe, offset=14+offset)
+		(ip_tos, ip_protocol, ip_src, ip_dst, src_port, dst_port) = struct.unpack_from("!xB7xB2x4s4sHH", etherframe, offset=14+offset)
 		if ip_protocol == 1: # ICMP
 			transport_src_port_or_icmp_type = src_port>>8
 			transport_dst_port_or_icmp_code = src_port&0xFF
@@ -522,7 +522,8 @@ def ofptuple(etherframe):
 			transport_src_port_or_icmp_type = src_port
 			transport_dst_port_or_icmp_code = dst_port
 	elif ethernet_type == 0x0806: # ARP
-		(u1, ip_protocol, u2, ip_src, u3, ip_dst) = struct.unpack_from("!6sH6s4s6s4s", etherframe, offset=14+offset)
+		# ip_protocol : ARP Operation
+		(ip_protocol, ip_src, ip_dst) = struct.unpack_from("!6xH6x4s6x4s", etherframe, offset=14+offset)
 	
 	return collections.namedtuple("ofptuple", "in_port dl_src dl_dst dl_type dl_vlan dl_vlan_pcp nw_src nw_dst nw_proto ip_tos tp_src tp_dst")(
 		None,
