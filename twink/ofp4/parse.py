@@ -239,6 +239,7 @@ def ofp_instruction_actions(message, offset):
 	while cursor.offset < offset + len:
 		actions.append(ofp_action_(message,cursor))
 	
+	assert cursor.offset == offset+len
 	return namedtuple("ofp_instruction_actions",
 		"type,len,actions")(type,len,actions)
 
@@ -261,7 +262,7 @@ def ofp_instruction_experimenter(message, offset):
 # 7.2.5
 def ofp_action_header(message, offset):
 	return namedtuple("ofp_action_header",
-		"type,len")(*_unpack("HH", message, offset))
+		"type,len")(*_unpack("HH4x", message, offset))
 
 def ofp_action_(message, offset):
 	cursor = _cursor(offset)
@@ -319,7 +320,7 @@ def ofp_action_set_field(message, offset):
 	cursor = _cursor(offset)
 	offset = cursor.offset
 	
-	(type,len) = ofp_action_header(message, cursor)
+	(type,len) = _unpack("HH", message, cursor)
 	field = message[cursor.offset:offset+len]
 	cursor.offset = offset+len
 	return namedtuple("ofp_action_set_field",
@@ -566,6 +567,7 @@ def _list_fetch(message, cursor, limit, fetcher):
 	ret = []
 	while cursor.offset < limit:
 		ret.append(fetcher(message, cursor))
+	
 	assert cursor.offset == limit
 	return ret
 
