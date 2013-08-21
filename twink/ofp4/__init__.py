@@ -489,7 +489,7 @@ ofp_flow_expired_readon = type("ofp_flow_expired_readon", (_enum_base,), {
 	})(globals())
 
 
-def ofptuple(etherframe):
+def ofptuple(etherframe, in_port=None):
 	'''
 	returns an openflow v1.0 12 tuple without the first in_port
 	'''
@@ -526,7 +526,7 @@ def ofptuple(etherframe):
 		(ip_protocol, ip_src, ip_dst) = struct.unpack_from("!6xH6x4s6x4s", etherframe, offset=14+offset)
 	
 	return collections.namedtuple("ofptuple", "in_port dl_src dl_dst dl_type dl_vlan dl_vlan_pcp nw_src nw_dst nw_proto ip_tos tp_src tp_dst")(
-		None,
+		in_port,
 		ethernet_src,
 		ethernet_dst,
 		ethernet_type,
