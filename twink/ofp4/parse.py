@@ -574,7 +574,7 @@ def _list_fetch(message, cursor, limit, fetcher):
 # 7.3.5.1
 def ofp_desc(message, offset):
 	return namedtuple("ofp_desc",
-		"mfr_desc,hw_desc,sw_desc,serial_num,dp_desc")(*_unpack("256s256s256s32s256s"))
+		"mfr_desc,hw_desc,sw_desc,serial_num,dp_desc")(*_unpack("256s256s256s32s256s", message, offset))
 
 # 7.3.5.2
 def ofp_flow_stats_request(message, offset):

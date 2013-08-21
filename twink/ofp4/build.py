@@ -24,7 +24,7 @@ def _pack(fmt, *args):
 def _unpack(fmt, message, offset):
 	if fmt[0] != "!":
 		fmt = "!"+fmt
-	return struct.unpack(fmt, message, offset)
+	return struct.unpack_from(fmt, message, offset)
 
 def _align(length):
 	return (length+7)/8*8
@@ -43,7 +43,7 @@ def ofp_header(version, type, length, xid):
 
 def ofp_(header, data, type=None):
 	if isinstance(header, str):
-		(version, oftype, length, xid) = _unpack("BBHI", header)
+		(version, oftype, length, xid) = _unpack("BBHI", header, 0)
 		if isinstance(type, int):
 			assert oftype == type
 		elif isinstance(type, (list,tuple)):
@@ -133,7 +133,7 @@ def ofp_queue_prop_header(property, len):
 
 def ofp_queue_prop_(prop_header, data, type=None):
 	if isinstance(prop_header, str):
-		(property,len) = _unpack("HH", prop_header)
+		(property,len) = _unpack("HH", prop_header, 0)
 		if isinstance(type, int):
 			assert property==type
 		elif isinstance(type, (list, tuple)):
