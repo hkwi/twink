@@ -3,6 +3,7 @@ import logging
 import StringIO
 import os
 import os.path
+from collections import namedtuple
 from twink import *
 from gevent import spawn
 from gevent.event import Event, AsyncResult
@@ -347,8 +348,15 @@ class PortMonitorContext(object):
 		assert isinstance(channel, PortMonitorChannel)
 		
 		ofp_port = "!H6s16sIIIIII" # ofp_port v1.0
+		ofp_port_names = '''port_no hw_addr name
+			config state
+			curr advertised supported peer'''
 		if channel.version != 1:
 			ofp_port = "!I4x6s2x16sIIIIIIII"
+			ofp_port_names = '''port_no hw_addr name
+				config state
+				curr advertised supported peer
+				curr_speed max_speed'''
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if xid in self.multi and oftype==19: # MULTIPART_REPLY
@@ -360,7 +368,7 @@ class PortMonitorContext(object):
 				while offset < length:
 					port = list(struct.unpack_from(ofp_port, message, offset=offset))
 					port[2] = port[2].partition('\0')[0]
-					ports.append(port)
+					ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 					offset += struct.calcsize(ofp_port)
 				
 				if not flags&1:
@@ -375,13 +383,16 @@ class PortMonitorContext(object):
 			while offset < length:
 				port = list(struct.unpack_from(ofp_port, message, offset=offset))
 				port[2] = port[2].partition('\0')[0]
-				ports.append(port)
+				ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 				offset += struct.calcsize(ofp_port)
 			self.ports = ports
 			self.ports_init.set()
 		elif oftype==12: # PORT_STATUS
 			p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
-			self.update_port(p[0], p[1:])
+			reason = p[0]
+			port = list(p[1:])
+			port[2] = port[2].partition('\0')[0]
+			self.update_port(reason, namedtuple("ofp_port", ofp_port_names)(*port))
 
 
 class PortMonitorChannel(ControllerChannel):
@@ -393,17 +404,6 @@ class PortMonitorChannel(ControllerChannel):
 	@property
 	def ports(self):
 		return self._port_monitor.get_ports(self)
-	
-	def port_index(self):
-		if self.version==1:
-			return '''port_no hw_addr name
-				config state
-				curr advertised supported peer'''.split()
-		else:
-			return '''port_no hw_addr name
-				config state
-				curr advertised supported peer
-				curr_speed max_speed'''.split()
 	
 	def on_message(self, message):
 		'''
