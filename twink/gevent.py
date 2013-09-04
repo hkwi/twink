@@ -486,8 +486,15 @@ class UnixContext(object):
 	
 	def __init__(self, parent, **kwargs):
 		self.parent = parent
-		self.backlog = kwargs.get("backlog", 50)
-		self.socket_dir = kwargs.get("socket_dir")
+		try:
+			self.backlog = parent.backlog
+		except AttributeError:
+			self.backlog = 50
+		
+		try:
+			self.socket_dir = parent.socket_dir
+		except AttributeError:
+			self.socket_dir = None
 	
 	def channel_args(self):
 		return {"accept_versions": [self.parent.version,]}
