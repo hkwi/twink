@@ -639,7 +639,7 @@ def serve_forever(*servers, **opts):
 	for server in servers:
 		server.start()
 	try:
-		Event().wait()
+		opts.get("main", Event()).wait()
 	finally:
 		stop_timeout=opts.get("stop_timeout")
 		for th in [spawn(x.stop, timeout=stop_timeout) for x in servers]:
