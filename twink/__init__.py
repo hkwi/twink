@@ -60,7 +60,7 @@ def ofp_version_normalize(versions):
 		vset = set()
 		for version in versions:
 			if isinstance(version, float):
-				version = [1.0, 1.1, 1.2, 1.3].index(version) + 1
+				version = [1.0, 1.1, 1.2, 1.3, 1.4].index(version) + 1
 			assert isinstance(version, int), "unknown version %s" % version
 			vset.add(version)
 		return vset
@@ -159,7 +159,7 @@ class Channel(object):
 			if cross_versions:
 				self.version = max(cross_versions)
 			else:
-				ascii_txt = "Accept versions: %s" % ["- 1.0 1.1 1.2 1.3".split()[x] for x in list(accept_versions)]
+				ascii_txt = "Accept versions: %s" % ["- 1.0 1.1 1.2 1.3 1.4".split()[x] for x in list(accept_versions)]
 				self.send(struct.pack("!BBHIHH", max(accept_versions), 1,
 					struct.calcsize("!BBHIHH")+len(ascii_txt), hms_xid(),
 					0, 0) + ascii_txt, None)
@@ -260,7 +260,7 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 					if self.version==1:
 						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
 					else:
-						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.3)
+						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
 					super(ControllerChannel, self).send(msg, None)
 					self.direct_send(msg)
 					
@@ -282,9 +282,9 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype==6: # FEATURES_REPLY
 			if self.version < 4:
-				(self.datapath,) = struct.unpack_from("!Q", message, offset=8)
+				(self.datapath,) = struct.unpack_from("!Q", message, offset=8) # v1.0--v1.2
 			else:
-				(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8)
+				(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8) # v1.3--v1.4
 		
 		if super(ControllerChannel, self).on_message(message):
 			return True

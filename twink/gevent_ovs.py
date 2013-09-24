@@ -151,7 +151,7 @@ if __name__=="__main__":
 		return ret
 	
 	logging.basicConfig(level=logging.DEBUG)
-	address = ("0.0.0.0", 6633)
+	address = ("0.0.0.0", 6653)
 	tcpserv = StreamServer(address, handle=StreamHandler(
 		channel_cls = type("SChannel",
 			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 

@@ -239,7 +239,8 @@ class SyncChannel(ControllerChannel):
 		return self._sync.simple_request(self, 7)
 	
 	def stats(self, stype, payload):
-		if self.version==4:
+		if self.version in (4,5):
+			# XXX: STATS are renamed to MULTIPART. Thinking of making compatibility here.
 			raise NotImplemented("openflow version compatibility")
 		(xid, result) = self._sync.prepare()
 		if self.version==1:
@@ -258,21 +259,23 @@ class SyncChannel(ControllerChannel):
 		(xid, result) = self._sync.prepare()
 		if self.version==1:
 			self.send(struct.pack("!BBHIH2x", self.version, 20, 12, xid, port), None) # OFPT_QUEUE_GET_CONFIG_REQUEST=20 (v1.0)
-		else:
+		elif self.version in (2,3,4):
 			self.send(struct.pack("!BBHII4x", self.version, 22, 16, xid, port), None) # OFPT_QUEUE_GET_CONFIG_REQUEST=22 (v1.1, v1.2, v1.3)
+		else:
+			raise NotImplemented("openflow version compatibility") # became out-of-scope in v1.4
 		return result.get()
 	
 	def role(self, role, generation_id):
 		if self.version in (1,2):
 			raise NotImplemented("openflow version compatibility")
 		(xid, result) = self._sync.prepare()
-		self.send(struct.pack("!BBHII4xQ", self.version, 24, 24, xid, role, generation_id), None) # OFPT_ROLE_REQUEST=24 (v1.2, v1.3)
+		self.send(struct.pack("!BBHII4xQ", self.version, 24, 24, xid, role, generation_id), None) # OFPT_ROLE_REQUEST=24 (v1.2, v1.3, v1.4)
 		return result.get()
 	
 	def get_async(self):
-		if self.version!=4:
+		if self.version < 4:
 			raise NotImplemented("openflow version compatibility")
-		return self._sync.simple_request(self, 26) # OFPT_GET_ASYNC_REQUEST=26 (v1.3)
+		return self._sync.simple_request(self, 26) # OFPT_GET_ASYNC_REQUEST=26 (v1.3, v1.4)
 	
 	def single(self, message):
 		return self.multi([message,]).pop()
@@ -305,11 +308,11 @@ class PortMonitorContext(object):
 	
 	def get_ports(self, channel):
 		if not self.ports_init.is_set():
-			if channel.version == 4:
+			if channel.version in (4, 5):
 				xid = hms_xid()
 				self.multi[xid] = []
 				channel.send(struct.pack("!BBHIHH4x", channel.version, 
-					18, # MULTIPART_REQUEST (v1.3)
+					18, # MULTIPART_REQUEST (v1.3, v1.4)
 					16, # struct.calcsize(fmt)==16
 					xid, 
 					13, # PORT_DESC
@@ -351,18 +354,22 @@ class PortMonitorContext(object):
 		ofp_port_names = '''port_no hw_addr name
 			config state
 			curr advertised supported peer'''
-		if channel.version != 1:
+		if channel.version in (2,3,4):
 			ofp_port = "!I4x6s2x16sIIIIIIII"
 			ofp_port_names = '''port_no hw_addr name
 				config state
 				curr advertised supported peer
 				curr_speed max_speed'''
+		elif channel.version == 5:
+			ofp_port = "!IH2x6s2x6sII"
+			ofp_port_names = '''port_no length hw_addr name
+				config state'''
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if xid in self.multi and oftype==19: # MULTIPART_REPLY
-			assert channel.version == 4
+			assert channel.version in (4,5)
 			(mptype, flags) = struct.unpack_from("!HH4x", message, offset=8)
-			if mptype==13:
+			if mptype==13: # OFPMP_PORT_DESC
 				ports = self.multi[xid]
 				offset = 16
 				while offset < length:
@@ -663,7 +670,7 @@ if __name__=="__main__":
 		return ret
 	
 	logging.basicConfig(level=logging.DEBUG)
-	address = ("0.0.0.0", 6633)
+	address = ("0.0.0.0", 6653)
 	# use spawn=pool or spawn=int kwarg to make sure Channel.close called.
 	tcpserv = StreamServer(address, handle=StreamHandler(
 		channel_cls=type("SChannel",
