@@ -35,6 +35,9 @@ def ofp_header(version, type, length, xid):
 		version = 4
 	assert version==4
 	
+	if length is None:
+		length = 8
+	
 	if xid is None:
 		xid = default_xid()
 	
@@ -424,6 +427,8 @@ def ofp_switch_features(header, datapath_id, n_buffers, n_tables, auxiliary_id, 
 
 # 7.3.2
 def ofp_switch_config(header, flags, miss_send_len):
+	if miss_send_len is None:
+		miss_send_len = OFPCML_NO_BUFFER
 	msg = ofp_(header, _pack("HH",
 		flags,
 		miss_send_len), (OFPT_SET_CONFIG, OFPT_GET_CONFIG_REPLY))
@@ -1033,6 +1038,8 @@ def ofp_port_status(header, reason, desc):
 
 # 7.4.4
 def ofp_error_msg(header, type, code, data):
+	if data is None:
+		data = ""
 	return ofp_(header,
 		_pack("HH", type, code)+data,
 		OFPT_ERROR)
