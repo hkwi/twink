@@ -615,7 +615,7 @@ def ofp_multipart_request(header, type, flags, body=None):
 			OFPMP_GROUP_FEATURES, OFPMP_METER_FEATURES, OFPMP_PORT_DESC):
 		body = ""
 	elif type in (OFPMP_FLOW, OFPMP_AGGREGATE, OFPMP_PORT_STATS, 
-			OFPMP_QUEUE, OFPMP_GROUP, OFPMP_METER, OFPMP_METER_CONFIG):
+			OFPMP_QUEUE_STATS, OFPMP_GROUP, OFPMP_METER, OFPMP_METER_CONFIG):
 		if body is None:
 			body = ""
 		else:
@@ -642,7 +642,7 @@ def ofp_multipart_reply(header, type, flags, body):
 			body = ""
 		else:
 			raise ValueError(body)
-	elif type in (OFPMP_FLOW, OFPMP_TABLE, OFPMP_PORT_STATS, OFPMP_QUEUE, 
+	elif type in (OFPMP_FLOW, OFPMP_TABLE, OFPMP_PORT_STATS, OFPMP_QUEUE_STATS, 
 			OFPMP_GROUP, OFPMP_GROUP_DESC, OFPMP_METER, OFPMP_METER_CONFIG,
 			OFPMP_TABLE_FEATURES, OFPMP_PORT_DESC):
 		if isinstance(body, (list,tuple)):
