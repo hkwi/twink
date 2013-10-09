@@ -458,6 +458,15 @@ def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 	else:
 		raise ValueError(instructions)
 	
+	if buffer_id is None:
+		buffer_id = 0xffffffff # OFP_NO_BUFFER
+	
+	if out_port is None:
+		out_port = OFPP_ANY
+	
+	if out_group is None:
+		out_group = OFPG_ANY
+	
 	msg = ofp_(header, _pack("QQBB3H3IH2x",
 		cookie, cookie_mask,
 		table_id, command,
