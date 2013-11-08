@@ -38,7 +38,7 @@ ofp_ipv6exthdr_flags = type("ofp_ipv6exthdr_flags", (_enum_base,), {
 	})(globals())
 
 def _bits(oxm_field):
-	if oxm_field in (OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT):
+	if oxm_field in (OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT, OXM_OF_PBB_ISID):
 		bits = "I"
 	elif oxm_field in (OXM_OF_METADATA, OXM_OF_TUNNEL_ID):
 		bits = "Q"
@@ -93,14 +93,18 @@ def build(oxm_class, oxm_field, oxm_hasmask, oxm_length, oxm_value, oxm_mask=Non
 	
 	bits = _bits(oxm_field)
 	
-	oxm_hasmask = 0
-	if oxm_mask:
-		for b in struct.pack("!"+bits, oxm_mask):
-			if ord(b):
-				oxm_hasmask = 1
-				break
+	if oxm_hasmask:
+		oxm_hasmask = 1
+	else:
+		oxm_hasmask = 0
 	
-	if oxm_mask:
+	if oxm_mask is None:
+		if oxm_hasmask:
+			oxm_mask = 0
+	else:
+		oxm_hasmask = 1
+	
+	if oxm_hasmask:
 		oxm_length = struct.calcsize("!"+bits*2)
 		return struct.pack("!HBB"+bits*2, oxm_class, (oxm_field<<1)+oxm_hasmask, oxm_length, oxm_value, oxm_mask)
 	else:
