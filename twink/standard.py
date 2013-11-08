@@ -11,7 +11,10 @@ class StandardChannel(Channel):
 		self.server = kwargs["server"]
 	
 	def direct_send(self, message):
-		self.socket.sendto(message, self.peer)
+		if self.peer:
+			self.socket.sendto(message, self.peer)
+		else:
+			self.socket.send(message)
 
 class ChannelClose(Exception):
 	# to normally close the channel by raising an exception
@@ -88,6 +91,14 @@ class StreamHandler(StandardHandler):
 		if channel.version is None:
 			raise ChannelClose("closed before hello recv")
 
+class UnixStreamClientChannel(SwitchChannel,StandardChannel):
+#	accept_versions = [4,]
+	def __init__(self, filename, callback=easy_message_handler):
+		s = socket.socket(socket.AF_UNIX)
+		s.connect(filename)
+		super(UnixStreamClientChannel, self).__init__(socket=s, peer=None, server=None)
+		self.send(hello(self.accept_versions), callback)
+
 if __name__=="__main__":
 	def handle_message(message, channel):
 		(version, oftype, message_len, xid) = parse_ofp_header(message)
@@ -101,7 +112,11 @@ if __name__=="__main__":
 # 		channel_cls=type("SChannel",(SwitchChannel,LoggingChannel,StandardChannel),{"accept_versions":[4,]}),
 # 		message_handler=handle_message))
 
-	serv = SocketServer.TCPServer(("0.0.0.0", 6633), StreamHandler(
+	serv = SocketServer.UnixStreamServer("hoge.txt", StreamHandler(
 		channel_cls=type("SChannel",(ControllerChannel,LoggingChannel,StandardChannel),{"accept_versions":[4,]}),
 		message_handler=handle_message))
+
+# 	serv = SocketServer.ThreadingTCPServer(("0.0.0.0", 6633), StreamHandler(
+# 		channel_cls=type("SChannel",(ControllerChannel,LoggingChannel,StandardChannel),{"accept_versions":[4,]}),
+# 		message_handler=handle_message))
 	serv.serve_forever()
