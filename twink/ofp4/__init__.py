@@ -76,6 +76,9 @@ class _enum_base(object):
 	def keys(self):
 		return [k for k,v in self.items()]
 
+# special definition
+OFP_NO_BUFFER = 0xffffffff
+
 # 6.4 and 7.3.4.1
 ofp_flow_mod_command = type("ofp_flow_mod_command", (_enum_base,), {
 	"prefix": "OFPFC",
