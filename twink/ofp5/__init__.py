@@ -250,7 +250,7 @@ ofp_config_flags = type("ofp_config_flags", (_enum_base,), {
 	})(globals())
 
 ofp_table = type("ofp_table", (_enum_base,), {
-	"prefix": "OFPIT",
+	"prefix": "OFPTT",
 	"numbers": {
 		"MAX": 0xfe,
 		"ALL": 0xff }
