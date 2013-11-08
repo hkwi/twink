@@ -16,6 +16,13 @@ creation.
 For convenience, twink has `ofp4` openflow 1.3 message parser/builder
 as `twink.ofp4`, and `twink.ofp5` for openflow 1.4.
 
+parallel and concurrency
+------------------------
+With `twink.gevent`, openflow message handling will be parallel.
+During handling a specific message, you can suspend it and wait for 
+next openflow message incoming using `gvent.event`.
+`twink.standard` provides per connection concurrency.
+You must use mutex that lives across connections.
 
 LICENSE
 -------
