@@ -1005,6 +1005,9 @@ def ofp_packet_out(header, buffer_id, in_port, actions_len, actions, data):
 	else:
 		raise ValueError(data)
 	
+	if buffer_id is None:
+		buffer_id = OFP_NO_BUFFER
+	
 	actions_len = _len(actions)
 	
 	return ofp_(header,
