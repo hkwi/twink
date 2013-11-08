@@ -135,6 +135,9 @@ class StreamHandler(ServerHandler):
 		finally:
 			channel.close()
 			socket.close()
+		
+		if channel.version is None:
+			raise ChannelClose("closed before hello recv")
 
 	def channel_message(self, channel, message):
 		try:
