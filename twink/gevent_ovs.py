@@ -6,52 +6,8 @@ import logging
 subprocess.check_call(["ovs-ofctl","--version"], stdout=open("/dev/null","w"), stderr=open("/dev/null","w"))
 
 
-class ProxySwitchChannel(StreamChannel):
-	# To debug this channel, add LogginChannel mixin
-	message_handler = None
-	def send(self, message, message_handler): # send message to controller
-		super(ProxySwitchChannel, self).send(message, message_handler) # for observers
-		if self.message_handler is None:
-			self.message_handler = message_handler
-		assert self.message_handler == message_handler, "We can handle only one handler at a time."
-		
-		self.direct_send(message)
-	
-	def on_message(self, message): # recv message from controller
-		super(ProxySwitchChannel, self).on_message(message) # for observers
-		self.message_handler(message, self)
 
-
-class ProxyMessageHandler(object):
-	def __init__(self, upstream):
-		self.parent = upstream
-		self.channel = None
-	
-	def __call__(self, message, channel):
-		if self.channel is None:
-			self.channel = channel
-		assert self.channel == channel, "We can handle only one controller connection at a time."
-		
-		(version, oftype, length, xid) = parse_ofp_header(message)
-		if oftype==2: # ECHO
-			channel.send(struct.pack("!BBHI", channel.version, 3, 8+length, xid)+message, None)
-			return True
-		elif oftype==0: # HELLO
-			accept_versions = channel.accept_versions
-			if not accept_versions:
-				accept_versions = set([1,])
-			channel.version = max(parse_hello(message) & accept_versions)
-		else:
-			self.parent.send(message, self.on_parent_message)
-	
-	def on_parent_message(self, message, channel):
-		assert channel is self.parent
-		
-		if self.channel.closed:
-			raise CallbackDeadError("channel closed")
-		self.channel.send(message, self)
-
-
+# TODO: REWRITE
 class OvsChannel(Channel):
 	def add_flow(self, flow):
 		return self.ofctl("add-flow", flow)

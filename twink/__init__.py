@@ -1,10 +1,95 @@
+import binascii
 import datetime
-import time
-import weakref
+import logging
+import os
+import socket
+import SocketServer
 import struct
 import types
-import logging
-import binascii
+import weakref
+
+
+class Channel(object):
+	'''
+	Openflow abstract connection class, not only for TCP but also for UDP.
+	This is the reason that the name is not "Connection" but "Channel".
+	'''
+	messages = None
+	def __init__(self, *args, **kwargs):
+		self._socket = kwargs.get("socket") # dedicated socket
+		self._sendto = kwargs.get("sendto") # only if channel prefers sendto()
+		self._peer = kwargs.get("peer")
+	
+	@property
+	def closed(self):
+		return self._peer is None
+	
+	def close(self):
+		if self.messages:
+			self.messages.close()
+		
+		if self._socket:
+			self._socket.close()
+			self._socket = None
+		
+		if self._peer:
+			self._peer = None
+	
+	def send(self, message, **kwargs):
+		if self._sendto:
+			self._sendto(message, self._peer)
+		elif self._socket:
+			self._socket.send(message)
+		else:
+			raise ValueError("socket or sendto is required")
+	
+	def recv(self):
+		return self.messages.next()
+	
+	def start(self):
+		pass
+	
+	def loop(self):
+		pass
+
+class LoggingChannel(Channel):
+	channel_log_name = "channel"
+	send_log_name = "send"
+	recv_log_name = "recv"
+	
+	def __init__(self, *args, **kwargs):
+		super(LoggingChannel, self).__init__(*args, **kwargs)
+		logging.getLogger(self.channel_log_name).info("%s connect" % self)
+	
+	def send(self, message, **kwargs):
+		logging.getLogger(self.send_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
+		return super(LoggingChannel, self).send(message, **kwargs)
+	
+	def recv(self):
+		message = super(LoggingChannel, self).recv()
+		logging.getLogger(self.recv_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
+		return message
+	
+	def close(self):
+		super(LoggingChannel, self).close()
+		logging.getLogger(self.channel_log_name).info("%s close" % self)
+
+
+class Error(Exception):
+	pass
+
+
+class OpenflowError(Error):
+	def __init__(self, message):
+		vals = list(struct.unpack_from("!BBHIHH", message))
+		vals.append(binascii.b2a_hex(message[struct.calcsize("!BBHIHH"):]))
+		o = zip("version oftype length xid etype ecode payload".split(), vals)
+		super(OpenflowError, self).__init__("OFPT_ERROR %s" % repr(o))
+		self.message = message
+
+class OfpVersionMismatch(Error):
+	pass
+
 
 def parse_ofp_header(message):
 	'''
@@ -12,33 +97,66 @@ def parse_ofp_header(message):
 	'''
 	return struct.unpack_from("!BBHI", message)
 
-def read_message(sized_read):
+def read_message(sized_read, interactive=False):
 	'''
+	generator for openflow message from bytestream reader.
 	sized_read : function of `bytestr = func(size)`
+	
+	When resource is temporary unavailable, then empty string
+	"" will be returned.
+	This happens with nonblocking socket for example.
 	'''
 	OFP_HEADER_LEN = 8
-	message = bytearray()
-	while len(message) < OFP_HEADER_LEN:
-		try:
-			ext = sized_read(OFP_HEADER_LEN-len(message))
-		except:
+	while True:
+		message = bytearray()
+		while len(message) < OFP_HEADER_LEN:
 			ext = ""
-		if len(ext) == 0:
+			try:
+				ext = sized_read(OFP_HEADER_LEN-len(message))
+			except socket.error, e:
+				if e.errno == os.errno.EAGAIN:
+					yield ""
+					continue
+				elif e.errno == os.errno.ECONNRESET:
+					break
+				else:
+					raise
+			except KeyboardInterrupt:
+				if interactive:
+					yield ""
+					continue
+				else:
+					raise
+			if len(ext) == 0:
+				break
+			message += ext
+		if len(message) == 0: # normal shutdown
 			break
-		message += ext
-	if len(message) == 0: # normal shutdown
-		return None
-	assert len(message) == OFP_HEADER_LEN, "Read error in openflow message header."
-	
-	(version,oftype,message_len,x) = parse_ofp_header(bytes(message))
-	while len(message) < message_len:
-		ext = sized_read(message_len-len(message))
-		if len(ext) == 0:
-			break
-		message += ext
-	assert len(message) == message_len, "Read error in openflow message body."
-	
-	return bytes(message) # freeze the message for ease in dump
+		assert len(message) == OFP_HEADER_LEN, "Read error in openflow message header."
+		
+		(version,oftype,message_len,x) = parse_ofp_header(bytes(message))
+		while len(message) < message_len:
+			ext = ""
+			try:
+				ext = sized_read(message_len-len(message))
+			except socket.error, e:
+				if e.errno == os.errno.EAGAIN:
+					yield ""
+					continue
+				else:
+					raise
+			except KeyboardInterrupt:
+				if interactive:
+					yield ""
+					continue
+				else:
+					raise
+			if len(ext) == 0:
+				break
+			message += ext
+		assert len(message) == message_len, "Read error in openflow message body."
+		
+		yield bytes(message) # freeze the message for ease in dump
 
 def ofp_header_only(oftype, version=1, xid=None):
 	if xid is None:
@@ -104,89 +222,67 @@ def parse_hello(message):
 					versions.add(idx*32 + s)
 	return versions
 
+class OpenflowChannel(Channel):
+	version = None
+	accept_versions = [4,] # just for default value
+	handle = None
+	
+	def attach(self, stream_socket, autostart=True, interactive=True):
+		self._socket = stream_socket
+		self._peer = stream_socket.getpeername()
+		self.messages = read_message(stream_socket.recv, interactive=interactive)
+		if autostart:
+			self.start()
+	
+	def start(self):
+		self.send(hello(self.accept_versions))
+	
+	def loop(self):
+		while not self.closed:
+			try:
+				message = self.recv()
+			except StopIteration:
+				message = None
+			
+			if not message:
+				break # exit the loop for next loop()
+			
+			self.handle_proxy(self.handle)(message)
+	
+	def recv(self):
+		message = super(OpenflowChannel, self).recv()
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype==0: # HELLO
+				accept_versions = ofp_version_normalize(self.accept_versions)
+				if not accept_versions:
+					accept_versions = set([1,])
+				cross_versions = parse_hello(message) & accept_versions
+				if cross_versions:
+					self.version = max(cross_versions)
+				else:
+					ascii_txt = "Accept versions: %s" % ["- 1.0 1.1 1.2 1.3 1.4".split()[x] for x in list(accept_versions)]
+					self.send(struct.pack("!BBHIHH", max(accept_versions), 1,
+						struct.calcsize("!BBHIHH")+len(ascii_txt), hms_xid(),
+						0, 0) + ascii_txt)
+					self.close()
+					raise OfpVersionMismatch(ascii_txt)
+		return message
+	
+	def handle_proxy(self, handle):
+		# decorator this allows stacking
+		return handle
 
-class Error(Exception):
-	pass
-
-
-class OpenflowError(Error):
-	def __init__(self, message):
-		vals = list(struct.unpack_from("!BBHIHH", message))
-		vals.append(binascii.b2a_hex(message[struct.calcsize("!BBHIHH"):]))
-		o = zip("version oftype length xid etype ecode payload".split(), vals)
-		super(OpenflowError, self).__init__("OFPT_ERROR %s" % repr(o))
-		self.message = message
-
-
-class Channel(object):
-	ctime = None
-	version = None # The negotiated openflow version
-	accept_versions = None
-	
-	def __init__(self, *args, **kwargs):
-		self.ctime = time.time()
-	
-	@property
-	def closed(self):
-		return False
-	
-	def close(self):
-		pass
-	
-	def send(self, message, message_handler):
-		'''
-		Interface for application side.
-		
-		message_handler is a function or a bound method. The signature is
-		func(message, channel). message_handler may raise CallbackDeadError
-		if callback is not available any further.
-		'''
-		pass
-	
-	def on_message(self, message):
-		'''
-		Interface for inner connection side
-		'''
-		(version, oftype, length, xid) = parse_ofp_header(message)
-		if oftype==2: # ECHO
-			self.send(struct.pack("!BBHI", self.version, 3, length, xid)+message[8:], None)
-			return True
-		elif oftype==0: # HELLO
-			accept_versions = ofp_version_normalize(self.accept_versions)
-			if not accept_versions:
-				accept_versions = set([1,])
-			cross_versions = parse_hello(message) & accept_versions
-			if cross_versions:
-				self.version = max(cross_versions)
-			else:
-				ascii_txt = "Accept versions: %s" % ["- 1.0 1.1 1.2 1.3 1.4".split()[x] for x in list(accept_versions)]
-				self.direct_send(struct.pack("!BBHIHH", max(accept_versions), 1,
-					struct.calcsize("!BBHIHH")+len(ascii_txt), hms_xid(),
-					0, 0) + ascii_txt)
-				self.close()
-				return True
-
-
-class LoggingChannel(Channel):
-	def __init__(self, *args, **kwargs):
-		super(LoggingChannel, self).__init__(*args, **kwargs)
-		self.channel_log_name = kwargs.get("channel_log_name", "channel")
-		self.send_log_name = kwargs.get("send_log_name", "send")
-		self.recv_log_name = kwargs.get("recv_log_name", "recv")
-		
-		logging.getLogger(self.channel_log_name).info("%s open" % self)
-	
-	def send(self, message, message_handler):
-		logging.getLogger(self.send_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
-		return super(LoggingChannel, self).send(message, message_handler)
-	
-	def on_message(self, message):
-		logging.getLogger(self.recv_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
-		return super(LoggingChannel, self).on_message(message)
-	
-	def close(self):
-		logging.getLogger(self.channel_log_name).info("%s close" % self)
-		return super(LoggingChannel, self).close()
+class AutoEchoChannel(OpenflowChannel):
+	def handle_proxy(self, handle):
+		def intercept(message):
+			if message:
+				(version, oftype, length, xid) = parse_ofp_header(message)
+				if oftype==2: # ECHO
+					self.send(struct.pack("!BBHI", self.version, 3, length, xid)+message[8:])
+				else:
+					super(AutoEchoChannel, self).handle_proxy(handle)(message)
+		return intercept
 
 
 class CallbackDeadError(Error):
@@ -240,15 +336,19 @@ class Chunk(WeakCallbackCaller):
 		self.callback = message_handler
 
 
-class ControllerChannel(Channel, WeakCallbackCaller):
+class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 	datapath = None
 	auxiliary = None
+	seq = None
 	
-	def __init__(self, *args, **kwargs):
-		super(ControllerChannel, self).__init__(*args, **kwargs)
-		self.seq = []
-	
-	def send(self, message, message_handler):
+	def send(self, message, **kwargs):
+		if self.seq is None:
+			self.seq = []
+		
+		message_handler = kwargs.get("callback")
+		if not message_handler:
+			message_handler = super(ControllerChannel, self).handle_proxy(self.handle)
+		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if (oftype==18 and version==1) or (oftype==20 and version!=1): # OFPT_BARRIER_REQUEST
 			self.seq.append(Barrier(xid, message_handler))
@@ -261,8 +361,7 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
 					else:
 						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
-					super(ControllerChannel, self).send(msg, None)
-					self.direct_send(msg)
+					super(ControllerChannel, self).send(msg)
 					
 					self.seq.append(Barrier(bxid))
 					self.seq.append(Chunk(message_handler))
@@ -275,74 +374,142 @@ class ControllerChannel(Channel, WeakCallbackCaller):
 				self.seq.append(Chunk(message_handler))
 			self.callback = message_handler
 		
-		super(ControllerChannel, self).send(message, message_handler)
-		self.direct_send(message)
+		super(ControllerChannel, self).send(message)
 	
-	def on_message(self, message):
+	def recv(self):
+		message = super(ControllerChannel, self).recv()
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype==6: # FEATURES_REPLY
+				if self.version < 4:
+					(self.datapath,) = struct.unpack_from("!Q", message, offset=8) # v1.0--v1.2
+				else:
+					(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8) # v1.3--v1.4
+		return message
+	
+	def handle_proxy(self, handle):
+		def intercept(message):
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if self.seq:
+				if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
+					chunk_drop = False
+					for e in self.seq:
+						if isinstance(e, Barrier):
+							if e.xid == xid:
+								self.seq = self.seq[self.seq.index(e)+1:]
+								if e.callback:
+									try:
+										return e.callback(message, self)
+									except CallbackDeadError:
+										pass # This should not happen
+								return True
+							else:
+								assert False, "missing barrier(xid=%d) before barrier(xid=%d)" % (e.xid, xid)
+						elif isinstance(e, Chunk):
+							assert chunk_drop==False, "dropping multiple chunks at a time"
+							chunk_drop = True
+					assert False, "got unknown barrier xid"
+				else:
+					e = self.seq[0]
+					if isinstance(e, Chunk):
+						if e.callback:
+							try:
+								return e.callback(message, self)
+							except CallbackDeadError:
+								del(self.seq[0])
+			
+			if self.callback:
+				return self.callback(message, self)
+			
+			logging.warn("No callback found for handling message %s" % binascii.b2a_hex(message))
+		return intercept
+
+
+class ChildChannel(OpenflowChannel):
+	parent = None # must be set
+	channels = None # might be set to set()
+	def __init__(self, *args, **kwargs):
+		super(ChildChannel, self).__init__(*args, **kwargs)
+		if self.channels is not None:
+			self.channels.add(self)
+	
+	def close(self):
+		super(ChildChannel, self).close()
+		if self.channels is not None:
+			self.channels.remove(self)
+	
+	def handle(self, message):
+		pass # ignore all messages
+
+
+class JackinChildChannel(ChildChannel):
+	def handle(self, message):
 		(version, oftype, length, xid) = parse_ofp_header(message)
-		if oftype==6: # FEATURES_REPLY
-			if self.version < 4:
-				(self.datapath,) = struct.unpack_from("!Q", message, offset=8) # v1.0--v1.2
-			else:
-				(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8) # v1.3--v1.4
-		
-		if super(ControllerChannel, self).on_message(message):
-			return True
-		
-		if self.seq:
-			if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
-				chunk_drop = False
-				for e in self.seq:
-					if isinstance(e, Barrier):
-						if e.xid == xid:
-							self.seq = self.seq[self.seq.index(e)+1:]
-							if e.callback:
-								try:
-									e.callback(message, self)
-								except CallbackDeadError:
-									pass # This should not happen
-							return
-						else:
-							assert False, "missing barrier(xid=%d) before barrier(xid=%d)" % (e.xid, xid)
-					elif isinstance(e, Chunk):
-						assert chunk_drop==False, "dropping multiple chunks at a time"
-						chunk_drop = True
-				assert False, "got unknown barrier xid"
-			else:
-				e = self.seq[0]
-				if isinstance(e, Chunk):
-					if e.callback:
-						try:
-							return e.callback(message, self)
-						except CallbackDeadError:
-							del(self.seq[0])
-		
-		if self.callback:
-			return self.callback(message, self)
-		logging.warn("No callback found for handling message %s" % binascii.b2a_hex(message))
-
-
-class SwitchChannel(Channel, WeakCallbackCaller):
-	def send(self, message, message_handler):
-		self.callback = message_handler
-		super(SwitchChannel, self).send(message, message_handler)
-		self.direct_send(message)
+		if oftype!=0:
+			self.parent.send(message, callback=self.cbfunc)
 	
-	def on_message(self, message):
-		if super(SwitchChannel, self).on_message(message):
-			return True
-		if self.callback:
-			return self.callback(message, self)
+	def cbfunc(self, message, origin_channel):
+		self.send(message)
 
 
-def easy_message_handler(message, channel):
-	(version, oftype, length, xid) = parse_ofp_header(message)
-	if oftype==10: # PACKET_IN
-		(buffer_id,) = struct.unpack_from("!I", message, offset=8)
-		# Some switch use PACKET_IN as ECHO_REQUEST, so responding to it with action "DROP"
-		if version==1:
-			msg = struct.pack("!IHH", buffer_id, 0xffff, 0) # OFPP_NONE=0xffff
-		else:
-			msg = struct.pack("!IIHHI", buffer_id, 0xffffffff, 0, 0, 0) # OFPP_CONTROLLER=0xffffffff
-		channel.send(struct.pack("!BBHI", version, 13, 8+len(msg), xid)+msg, None) # OFPT_PACKET_OUT=13
-		return True
+#
+# SocketServer.TCPServer, SocketServer.UnixStreamServer
+#
+class ChannelStreamServer(SocketServer.TCPServer):
+	# You can Mixin this class as:
+	# serv = type("Serv", (ThreadingTCPServer,ChannelStreamServer), {})(("localhost",6633). StreamHandler)
+	allow_reuse_address = True
+	channel_cls = None
+	def channel_handle(self, request, client_address):
+		ch = self.channel_cls(
+			socket=request,
+			peer=client_address)
+		ch.messages = read_message(request.recv)
+		ch.start()
+		try:
+			ch.loop()
+		except Exception,e:
+			logging.error(str(e), exc_info=True)
+		finally:
+			ch.close()
+
+
+#
+# SocketServer.UDPServer
+#
+class ChannelUDPServer(SocketServer.UDPServer):
+	allow_reuse_address = True
+	channel_cls = None
+	def channel_handle(self, request, client_address):
+		if self.channels is None:
+			self.channels = {}
+		
+		ch = self.channels.get(client_address)
+		if ch is None:
+			ch = self.channel_cls(
+				sendto=self.sendto,
+				peer=client_address)
+			self.channels[client_address] = ch
+			ch.start()
+		
+		(data, socket) = request
+		f = StringIO.StringIO(data)
+		ch.messages = read_message(f.read)
+		ch.loop()
+		
+		if f.tell() < len(data):
+			warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
+		ch.messages = None
+
+
+# handlers
+class ChannelHandler(SocketServer.BaseRequestHandler):
+	def handle(self):
+		self.server.channel_handle(self.request, self.client_address)
+
+class DatagramRequestHandler(ChannelHandler, SocketServer.DatagramRequestHandler):
+	pass
+
+class StreamRequestHandler(ChannelHandler, SocketServer.StreamRequestHandler):
+	pass
+
