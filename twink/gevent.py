@@ -10,17 +10,22 @@ class HandleInSpawnChannel(OpenflowChannel):
 	def handle_proxy(self, handle):
 		if handle:
 			def intercept(message, channel):
-				gevent.spawn(handle, message, channel)
+				def closing_intercept(message, channel):
+					try:
+						handle(message, channel)
+					except ChannelClose:
+						channel.close()
+					except:
+						channel.close()
+						raise
+				gevent.spawn(closing_intercept, message, channel)
 			return intercept
 		return handle
 
 
 class BranchingMixin(object):
 	subprocess = gevent.subprocess
-	def xid_event(self, **kwargs):
-		self.xid = kwargs.get("xid", hms_xid())
-		self.ev = gevent.event.Event()
-		self.data = None
+	event = gevent.event.Event
 	
 	def jackin_server(self, path, channels):
 		s = gevent.socket.socket(gevent.socket.AF_UNIX, gevent.socket.SOCK_STREAM)

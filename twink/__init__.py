@@ -1,5 +1,3 @@
-from __future__ import absolute_import
-from . import *
 import binascii
 import datetime
 import logging
@@ -32,9 +30,9 @@ class Channel(object):
 			self._socket.close()
 			self._socket = None
 		
-		if self.messages:
-			self.messages.close()
-		
+# 		if self.messages:
+# 			self.messages.close()
+# 		
 		if self._peer:
 			self._peer = None
 	
@@ -74,25 +72,27 @@ class LoggingChannel(Channel):
 		return message
 	
 	def close(self):
-		super(LoggingChannel, self).close()
-		logging.getLogger(self.channel_log_name).info("%s close" % self)
+		if not self.closed:
+			super(LoggingChannel, self).close()
+			logging.getLogger(self.channel_log_name).info("%s close" % self)
 
 
 class Error(Exception):
 	pass
 
+class ChannelClose(Error):
+	pass
 
-class OpenflowError(Error):
+class OfpVersionMismatch(Error):
+	pass
+
+class OpenflowError(Error): # Openflow protocol error
 	def __init__(self, message):
 		vals = list(struct.unpack_from("!BBHIHH", message))
 		vals.append(binascii.b2a_hex(message[struct.calcsize("!BBHIHH"):]))
 		o = zip("version oftype length xid etype ecode payload".split(), vals)
 		super(OpenflowError, self).__init__("OFPT_ERROR %s" % repr(o))
 		self.message = message
-
-class OfpVersionMismatch(Error):
-	pass
-
 
 def parse_ofp_header(message):
 	'''
@@ -101,7 +101,7 @@ def parse_ofp_header(message):
 	return struct.unpack_from("!BBHI", message)
 
 
-def read_message(sized_read, interactive=False, health_check=None):
+def read_message(sized_read, **kwargs):
 	'''
 	generator for openflow message from bytestream reader.
 	sized_read : function of `bytestr = func(size)`
@@ -110,10 +110,8 @@ def read_message(sized_read, interactive=False, health_check=None):
 	"" will be returned.
 	This happens with nonblocking socket for example.
 	'''
-	if health_check:
-		assert callable(health_check), "health_check must be callable"
-	else:
-		health_check = lambda: True
+	health_check = kwargs.get("health_check", lambda: True)
+	assert callable(health_check), "health_check must be callable"
 	
 	OFP_HEADER_LEN = 8
 	while health_check():
@@ -128,12 +126,12 @@ def read_message(sized_read, interactive=False, health_check=None):
 				if e.errno == os.errno.EAGAIN:
 					yield ""
 					continue
-				elif e.errno == os.errno.ECONNRESET:
+				elif e.errno in (os.errno.ECONNRESET, os.errno.EBADF):
 					break
 				else:
 					raise
 			except KeyboardInterrupt:
-				if interactive:
+				if kwargs.get("interactive", False):
 					yield ""
 					continue
 				else:
@@ -162,7 +160,7 @@ def read_message(sized_read, interactive=False, health_check=None):
 				else:
 					raise
 			except KeyboardInterrupt:
-				if interactive:
+				if kwargs.get("interactive", False):
 					yield ""
 					continue
 				else:
@@ -246,11 +244,15 @@ class OpenflowChannel(Channel):
 	accept_versions = [4,] # just for default value
 	handle = None
 	
-	def attach(self, stream_socket, autostart=True, interactive=True):
+	def attach(self, stream_socket, **kwargs):
 		self._socket = stream_socket
 		self._peer = stream_socket.getpeername()
-		self.messages = read_message(stream_socket.recv, interactive=interactive)
-		if autostart:
+		
+		opts = {"interactive":True,}
+		opts.update(kwargs)
+		self.messages = read_message(stream_socket.recv, **opts)
+		
+		if kwargs.get("autostart", True):
 			self.start()
 	
 	def start(self):
@@ -266,7 +268,10 @@ class OpenflowChannel(Channel):
 			if not message:
 				break # exit the loop for next loop()
 			
-			self.handle_proxy(self.handle)(message, self)
+			try:
+				self.handle_proxy(self.handle)(message, self)
+			except ChannelClose:
+				self.close()
 	
 	def recv(self):
 		message = super(OpenflowChannel, self).recv()
@@ -463,17 +468,17 @@ class BranchingChannel(OpenflowChannel):
 
 
 class JackinChannel(BranchingChannel):
-	# requires BranchingMixin, which will be provided by I/O utility class
 	jackin = None
 	jackin_halt = None
 	jackin_channels = None
+	
 	def close(self):
 		super(JackinChannel, self).close()
 		if self.jackin_channels:
 			for ch in self.jackin_channels:
 				ch.close()
 		if self.jackin:
-			self.jackin_halt() # BranchingMixin
+			self.jackin_halt()
 			os.remove(self.jackin_path())
 	
 	def recv(self):
@@ -483,6 +488,7 @@ class JackinChannel(BranchingChannel):
 			if oftype==0:
 				if self.jackin_channels is None:
 					self.jackin_channels = set()
+				assert hasattr(self, "jackin_server"), "requires BranchingMixin, which will be provided by I/O utility class"
 				self.jackin, starter, self.jackin_halt, addr = self.jackin_server(self.jackin_path(), self.jackin_channels) # BranchingMixin
 				starter()
 		
@@ -513,6 +519,7 @@ class MonitorChannel(BranchingChannel):
 			if oftype==0:
 				if self.monitor_channels is None:
 					self.monitor_channels = set()
+				assert hasattr(self, "monitor_server"), "requires BranchingMixin, which will be provided by I/O utility class"
 				self.monitor, starter, self.monitor_halt, addr = self.monitor_server(self.monitor_path(), self.monitor_channels) # BranchingMixin
 				starter()
 			
@@ -552,24 +559,31 @@ class JackinChildChannel(ChildChannel):
 		self.send(message)
 
 
+class SyncTracker(object):
+	def __init__(self, xid, ev):
+		self.xid = xid
+		self.ev = ev
+		self.data = None
+
 class SyncChannel(OpenflowChannel):
-	# Requires BranchingMixin
-	syncs = None
+	def __init__(self, *args, **kwargs):
+		super(SyncChannel, self).__init__(*args, **kwargs)
+		self.syncs = {}
+	
 	def recv(self):
 		message = super(SyncChannel, self).recv()
 		if message:
 			(version, oftype, length, xid) = parse_ofp_header(message)
-			if self.syncs is None:
-				self.syncs = {}
 			if xid in self.syncs:
-				x = self.xyncs[xid]
+				x = self.syncs[xid]
 				x.data = message
 				x.ev.set()
 		return message
 	
 	def send_sync(self, message, **kwargs):
 		(version, oftype, length, xid) = parse_ofp_header(message)
-		x = self.xid_event() # BranchingMixin
+		assert hasattr(self, "event"), "SyncChannel requires BranchingMixin and server loop"
+		x = SyncTracker(xid, self.event())
 		self.syncs[x.xid] = x
 		self.send(message, **kwargs)
 		x.ev.wait()
@@ -589,7 +603,7 @@ class SyncChannel(OpenflowChannel):
 			for k,x in self.syncs.items():
 				x.data = ""
 				x.ev.set()
-			self.syncs = None
+			self.syncs = {}
 		super(SyncChannel, self).close()
 	
 	def echo(self):
@@ -638,9 +652,9 @@ class ChannelStreamServer(SocketServer.TCPServer):
 	def shutdown_requested(self):
 		return not self._shutdown_requested
 	
-	def server_close(self):
-		SocketServer.TCPServer.server_close(self)
+	def shutdown(self):
 		self._shutdown_requested = True
+		SocketServer.TCPServer.shutdown(self)
 
 
 #
@@ -669,6 +683,8 @@ class ChannelUDPServer(SocketServer.UDPServer):
 		if f.tell() < len(data):
 			warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
 		ch.messages = None
+		if ch.closed:
+			del(self.channels[client_address])
 
 
 # handlers

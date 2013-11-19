@@ -8,42 +8,25 @@ import subprocess
 class HandleInThreadChannel(OpenflowChannel):
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
-			if not hasattr(self, "threads_lock"):
-				self.threads_lock = threading.Lock()
-				self.threads = []
-			
 			args = []
 			th = threading.Thread(target=self.handle_in_thread, args=args)
 			args.extend([th, handle, message, channel])
-			with self.threads_lock:
-				self.threads.append(th)
 			th.start()
 		return intercept
 	
 	def handle_in_thread(self, th, handle, message, channel):
-		print super(HandleInThreadChannel, self).handle_proxy(handle)
 		try:
 			super(HandleInThreadChannel, self).handle_proxy(handle)(message, channel)
-		finally:
-			if hasattr(self, "threads_lock"):
-				with self.threads_lock:
-					self.threads.remove(th)
-	
-	def close(self):
-		super(HandleInThreadChannel, self).close()
-		if hasattr(self, "threads_lock"):
-			with self.threads_lock:
-				for th in self.threads:
-					th.join()
-				self.threads = []
+		except ChannelClose:
+			channel.close()
+		except:
+			channel.close()
+			raise
 
 
 class BranchingMixin(object):
 	subprocess = subprocess
-	def xid_event(self, **kwargs):
-		self.xid = kwargs.get("xid", hms_xid())
-		self.ev = threading.Event()
-		self.data = None
+	event = threading.Event
 	
 	def jackin_server(self, path, channels):
 		class JackinServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer): pass
@@ -97,7 +80,8 @@ def serve_forever(*servers, **opts):
 			serv.server_close()
 			serv.shutdown()
 		for th in threads:
-			th.join()
+			if threading.current_thread() != th:
+				th.join()
 
 
 if __name__=="__main__":
