@@ -1,14 +1,9 @@
-from __future__ import absolute_import
-from twink.gevent import *
-from gevent import socket,subprocess
-import logging
+from . import *
+import subprocess
 
-subprocess.check_call(["ovs-ofctl","--version"], stdout=open("/dev/null","w"), stderr=open("/dev/null","w"))
-
-
-
-# TODO: REWRITE
-class OvsChannel(Channel):
+class OvsChannel(OpenflowChannel):
+	# requires BranchingMixin
+	ovsproxy_channels = None
 	def add_flow(self, flow):
 		return self.ofctl("add-flow", flow)
 	
@@ -16,15 +11,11 @@ class OvsChannel(Channel):
 		return self.ofctl("mod-flows", flow, strict=strict)
 	
 	def ofctl(self, action, *args, **options):
-		server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		server_socket.bind(("127.0.0.1", 0))
-		server = StreamServer(server_socket, handle=StreamHandler(
-			channel_cls=type("OvsProxy", (ProxySwitchChannel,), {
-				"accept_versions": set([self.version]),
-				}),
-			message_handler=ProxyMessageHandler(upstream=self)))
-		server_socket.listen(1)
-		server.start()
+		if self.ovsproxy_channels is None:
+			self.ovsproxy_channels = set()
+		
+		serv, starter, halt, addr = self.temp_server(self.ovsproxy_channels)
+		starter()
 		try:
 			if self.version != 1:
 				if "O" in options or "protocols" in options:
@@ -34,16 +25,16 @@ class OvsChannel(Channel):
 			cmd = ["ovs-ofctl",]
 			cmd.extend(self._make_ofctl_options(options))
 			cmd.append(action)
-			cmd.append("tcp:%s:%d" % server_socket.getsockname())
+			cmd.append("tcp:%s:%d" % addr)
 			cmd.extend(args)
 			
-			p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+			p = self.subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
 				logging.error(pstderr, exc_info=True)
 			return pstdout
 		finally:
-			server.stop()
+			halt()
 	
 	def _make_ofctl_options(self, options):
 		# key name, double hyphn, take arg type, join with equal
@@ -97,25 +88,24 @@ class OvsChannel(Channel):
 					ret.append(tmp)
 					ret.append(sval)
 		return ret
+	
+	def close(self):
+		super(OvsChannel, self).close()
+		if self.ovsproxy_channels:
+			for ch in self.ovsproxy_channels:
+				ch.close()
 
 if __name__=="__main__":
-	def message_handler(message, channel):
-		ret = easy_message_handler(message, channel)
-		(version, oftype, length, xid) = parse_ofp_header(message)
-		if oftype==0:
-			print channel.ofctl("dump-flows")
-		return ret
-	
+	from standard import *
 	logging.basicConfig(level=logging.DEBUG)
-	address = ("0.0.0.0", 6653)
-	tcpserv = StreamServer(address, handle=StreamHandler(
-		channel_cls = type("SChannel",
-			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 
-			{"accept_versions":[1,4]}),
-		message_handler = message_handler))
-	udpserv = OpenflowDatagramServer(address, 
-		channel_cls = type("DChannel",
-			(StreamChannel, ControllerChannel, OvsChannel, LoggingChannel), 
-			{"accept_versions":[1,4]}),
-		message_handler = message_handler)
-	serve_forever(tcpserv, udpserv)
+	
+	@staticmethod
+	def handle(message, channel):
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype == 0:
+				print channel.ofctl("dump-flows")
+	
+	tcpserv = ChannelStreamServer(("0.0.0.0", 6633), StreamRequestHandler)
+	tcpserv.channel_cls = type("TestChannel",(OvsChannel, BranchingMixin, ControllerChannel, AutoEchoChannel, LoggingChannel, HandleInThreadChannel),{"accept_versions":[4,], "handle":handle})
+	serve_forever(tcpserv)

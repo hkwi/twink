@@ -1,7 +1,10 @@
+from __future__ import absolute_import
+from . import *
 import binascii
 import datetime
 import logging
 import os
+import os.path
 import socket
 import SocketServer
 import struct
@@ -25,12 +28,12 @@ class Channel(object):
 		return self._peer is None
 	
 	def close(self):
-		if self.messages:
-			self.messages.close()
-		
 		if self._socket:
 			self._socket.close()
 			self._socket = None
+		
+		if self.messages:
+			self.messages.close()
 		
 		if self._peer:
 			self._peer = None
@@ -97,7 +100,8 @@ def parse_ofp_header(message):
 	'''
 	return struct.unpack_from("!BBHI", message)
 
-def read_message(sized_read, interactive=False):
+
+def read_message(sized_read, interactive=False, health_check=None):
 	'''
 	generator for openflow message from bytestream reader.
 	sized_read : function of `bytestr = func(size)`
@@ -106,13 +110,20 @@ def read_message(sized_read, interactive=False):
 	"" will be returned.
 	This happens with nonblocking socket for example.
 	'''
+	if health_check:
+		assert callable(health_check), "health_check must be callable"
+	else:
+		health_check = lambda: True
+	
 	OFP_HEADER_LEN = 8
-	while True:
+	while health_check():
 		message = bytearray()
-		while len(message) < OFP_HEADER_LEN:
+		while health_check() and len(message) < OFP_HEADER_LEN:
 			ext = ""
 			try:
 				ext = sized_read(OFP_HEADER_LEN-len(message))
+			except socket.timeout:
+				continue
 			except socket.error, e:
 				if e.errno == os.errno.EAGAIN:
 					yield ""
@@ -127,6 +138,7 @@ def read_message(sized_read, interactive=False):
 					continue
 				else:
 					raise
+			
 			if len(ext) == 0:
 				break
 			message += ext
@@ -135,14 +147,18 @@ def read_message(sized_read, interactive=False):
 		assert len(message) == OFP_HEADER_LEN, "Read error in openflow message header."
 		
 		(version,oftype,message_len,x) = parse_ofp_header(bytes(message))
-		while len(message) < message_len:
+		while health_check() and len(message) < message_len:
 			ext = ""
 			try:
 				ext = sized_read(message_len-len(message))
+			except socket.timeout:
+				continue
 			except socket.error, e:
 				if e.errno == os.errno.EAGAIN:
 					yield ""
 					continue
+				elif e.errno == os.errno.ECONNRESET:
+					break
 				else:
 					raise
 			except KeyboardInterrupt:
@@ -151,9 +167,12 @@ def read_message(sized_read, interactive=False):
 					continue
 				else:
 					raise
+			
 			if len(ext) == 0:
 				break
 			message += ext
+		if len(message) == 0: # normal shutdown
+			break
 		assert len(message) == message_len, "Read error in openflow message body."
 		
 		yield bytes(message) # freeze the message for ease in dump
@@ -247,7 +266,7 @@ class OpenflowChannel(Channel):
 			if not message:
 				break # exit the loop for next loop()
 			
-			self.handle_proxy(self.handle)(message)
+			self.handle_proxy(self.handle)(message, self)
 	
 	def recv(self):
 		message = super(OpenflowChannel, self).recv()
@@ -270,18 +289,18 @@ class OpenflowChannel(Channel):
 		return message
 	
 	def handle_proxy(self, handle):
-		# decorator this allows stacking
+		# decorator allows stacking
 		return handle
 
 class AutoEchoChannel(OpenflowChannel):
 	def handle_proxy(self, handle):
-		def intercept(message):
+		def intercept(message, channel):
 			if message:
 				(version, oftype, length, xid) = parse_ofp_header(message)
 				if oftype==2: # ECHO
 					self.send(struct.pack("!BBHI", self.version, 3, length, xid)+message[8:])
 				else:
-					super(AutoEchoChannel, self).handle_proxy(handle)(message)
+					super(AutoEchoChannel, self).handle_proxy(handle)(message, channel)
 		return intercept
 
 
@@ -346,8 +365,6 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 			self.seq = []
 		
 		message_handler = kwargs.get("callback")
-		if not message_handler:
-			message_handler = super(ControllerChannel, self).handle_proxy(self.handle)
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if (oftype==18 and version==1) or (oftype==20 and version!=1): # OFPT_BARRIER_REQUEST
@@ -388,7 +405,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 		return message
 	
 	def handle_proxy(self, handle):
-		def intercept(message):
+		def intercept(message, channel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if self.seq:
 				if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
@@ -420,9 +437,92 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 			
 			if self.callback:
 				return self.callback(message, self)
+			elif self.handle:
+				return super(ControllerChannel, self).handle_proxy(self.handle)(message, channel)
 			
 			logging.warn("No callback found for handling message %s" % binascii.b2a_hex(message))
 		return intercept
+
+
+class BranchingChannel(OpenflowChannel):
+	# mixin for parent channel
+	socket_dir = None
+	def socket_path(self, path):
+		if self.socket_dir:
+			path = os.path.join(self.socket_dir, path)
+		return os.path.abspath(path)
+	
+	def helper_path(self, suffix):
+		old = self.socket_path("unknown-%x.%s" % (os.getpid(), suffix))
+		if self.datapath:
+			new = self.socket_path("%x-%x.%s" % (self.datapath, os.getpid(), suffix))
+			if os.stat(old):
+				os.rename(old, new)
+			return new
+		return old
+
+
+class JackinChannel(BranchingChannel):
+	# requires BranchingMixin, which will be provided by I/O utility class
+	jackin = None
+	jackin_halt = None
+	jackin_channels = None
+	def close(self):
+		super(JackinChannel, self).close()
+		if self.jackin_channels:
+			for ch in self.jackin_channels:
+				ch.close()
+		if self.jackin:
+			self.jackin_halt() # BranchingMixin
+			os.remove(self.jackin_path())
+	
+	def recv(self):
+		message = super(JackinChannel, self).recv()
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype==0:
+				if self.jackin_channels is None:
+					self.jackin_channels = set()
+				self.jackin, starter, self.jackin_halt, addr = self.jackin_server(self.jackin_path(), self.jackin_channels) # BranchingMixin
+				starter()
+		
+		return message
+	
+	def jackin_path(self):
+		return self.helper_path("jackin")
+
+
+class MonitorChannel(BranchingChannel):
+	# requires BranchingMixin, which will be provided by I/O utility class
+	monitor = None
+	monitor_halt = None
+	monitor_channels = None
+	def close(self):
+		super(MonitorChannel, self).close()
+		if self.monitor_channels:
+			for ch in self.monitor_channels:
+				ch.close()
+		if self.monitor:
+			self.monitor_halt() # BranchingMixin
+			os.remove(self.monitor_path())
+	
+	def recv(self):
+		message = super(MonitorChannel, self).recv()
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype==0:
+				if self.monitor_channels is None:
+					self.monitor_channels = set()
+				self.monitor, starter, self.monitor_halt, addr = self.monitor_server(self.monitor_path(), self.monitor_channels) # BranchingMixin
+				starter()
+			
+			if self.monitor_channels:
+				for ch in self.monitor_channels:
+					ch.send(message)
+		return message
+	
+	def monitor_path(self):
+		return self.helper_path("monitor")
 
 
 class ChildChannel(OpenflowChannel):
@@ -438,12 +538,12 @@ class ChildChannel(OpenflowChannel):
 		if self.channels is not None:
 			self.channels.remove(self)
 	
-	def handle(self, message):
+	def handle(self, message, channel):
 		pass # ignore all messages
 
 
 class JackinChildChannel(ChildChannel):
-	def handle(self, message):
+	def handle(self, message, channel):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype!=0:
 			self.parent.send(message, callback=self.cbfunc)
@@ -452,19 +552,81 @@ class JackinChildChannel(ChildChannel):
 		self.send(message)
 
 
+class SyncChannel(OpenflowChannel):
+	# Requires BranchingMixin
+	syncs = None
+	def recv(self):
+		message = super(SyncChannel, self).recv()
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if self.syncs is None:
+				self.syncs = {}
+			if xid in self.syncs:
+				x = self.xyncs[xid]
+				x.data = message
+				x.ev.set()
+		return message
+	
+	def send_sync(self, message, **kwargs):
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		x = self.xid_event() # BranchingMixin
+		self.syncs[x.xid] = x
+		self.send(message, **kwargs)
+		x.ev.wait()
+		del(self.syncs[x.xid])
+		return x.data
+	
+	def _sync_simple(self, req_oftype, res_oftype):
+		message = self.send_sync(ofp_header_only(req_oftype, version=self.version))
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		if oftype == res_oftype:
+			return message
+		else:
+			raise OpenflowError(message)
+	
+	def close(self):
+		if self.syncs is not None:
+			for k,x in self.syncs.items():
+				x.data = ""
+				x.ev.set()
+			self.syncs = None
+		super(SyncChannel, self).close()
+	
+	def echo(self):
+		return self._sync_simple(2, 3)
+	
+	def feature(self):
+		return self._sync_simple(5, 6)
+	
+	def get_config(self):
+		return self._sync_simple(7, 8)
+	
+	def barrier(self):
+		if self.version==1:
+			return self._sync_simple(18, 19) # OFPT_BARRIER_REQUEST=18 (v1.0)
+		else:
+			return self._sync_simple(20, 21) # OFPT_BARRIER_REQUEST=20 (v1.1, v1.2, v1.3)
+
+
 #
 # SocketServer.TCPServer, SocketServer.UnixStreamServer
 #
 class ChannelStreamServer(SocketServer.TCPServer):
 	# You can Mixin this class as:
 	# serv = type("Serv", (ThreadingTCPServer,ChannelStreamServer), {})(("localhost",6633). StreamHandler)
+	timeout = 0.5
 	allow_reuse_address = True
 	channel_cls = None
+	_shutdown_requested = False
+	
 	def channel_handle(self, request, client_address):
 		ch = self.channel_cls(
 			socket=request,
 			peer=client_address)
-		ch.messages = read_message(request.recv)
+		if request.gettimeout() is None:
+			request.settimeout(0.5)
+		ch.messages = read_message(request.recv, health_check=self.shutdown_requested)
+		
 		ch.start()
 		try:
 			ch.loop()
@@ -472,6 +634,13 @@ class ChannelStreamServer(SocketServer.TCPServer):
 			logging.error(str(e), exc_info=True)
 		finally:
 			ch.close()
+	
+	def shutdown_requested(self):
+		return not self._shutdown_requested
+	
+	def server_close(self):
+		SocketServer.TCPServer.server_close(self)
+		self._shutdown_requested = True
 
 
 #
