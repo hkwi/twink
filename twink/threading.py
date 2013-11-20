@@ -68,9 +68,9 @@ def serve_forever(*servers, **opts):
 		ev = threading.Event()
 		signal.signal(signal.SIGINT, lambda num,fr: ev.set())
 	
-	threads = [threading.Thread(target=serv.serve_forever) for serv in servers]
-	for th in threads:
-#		th.daemon = True
+	for serv in servers:
+		th = threading.Thread(target=serv.serve_forever)
+		th.daemon = True
 		th.start()
 	try:
 		while not ev.is_set():
@@ -79,9 +79,6 @@ def serve_forever(*servers, **opts):
 		for serv in servers:
 			serv.server_close()
 			serv.shutdown()
-		for th in threads:
-			if threading.current_thread() != th:
-				th.join()
 
 
 if __name__=="__main__":
