@@ -20,6 +20,7 @@ class HandleInThreadChannel(OpenflowChannel):
 		except ChannelClose:
 			channel.close()
 		except:
+			logging.error("handle failed", exc_info=True)
 			channel.close()
 			raise
 
@@ -48,7 +49,7 @@ class BranchingMixin(object):
 			"channels": channels })
 		th = threading.Thread(target=serv.serve_forever)
 		th.daemon = True
-		return serv, th.start, serv.shutdown. serv.server_address
+		return serv, th.start, serv.shutdown, serv.server_address
 	
 	def temp_server(self, channels):
 		class TempServer(SocketServer.ThreadingMixIn, ChannelStreamServer): pass
@@ -83,9 +84,23 @@ def serve_forever(*servers, **opts):
 
 if __name__=="__main__":
 	logging.basicConfig(level=logging.DEBUG)
+	def msg_handle(message, channel):
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype==0:
+				channel.feature()
+	
 	class TestTcpServer(ChannelStreamServer, SocketServer.ThreadingTCPServer):
 		# TCPServer is not a child of new style object, so don't use type()
 		pass
 	tcpserv = TestTcpServer(("0.0.0.0", 6633), StreamRequestHandler)
-	tcpserv.channel_cls = type("TcpChannel",(BranchingMixin, ControllerChannel, AutoEchoChannel, LoggingChannel, HandleInThreadChannel),{"accept_versions":[4,]})
+	tcpserv.channel_cls = type("TcpChannel", (
+		SyncChannel,
+		BranchingMixin,
+		JackinChannel,
+		MonitorChannel,
+		ControllerChannel,
+		AutoEchoChannel, LoggingChannel, HandleInThreadChannel),{
+			"accept_versions":[4,],
+			"handle":staticmethod(msg_handle) })
 	serve_forever(tcpserv)

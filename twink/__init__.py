@@ -496,6 +496,8 @@ class JackinChannel(BranchingChannel):
 				assert hasattr(self, "jackin_server"), "requires BranchingMixin, which will be provided by I/O utility class"
 				self.jackin, starter, self.jackin_halt, addr = self.jackin_server(self.jackin_path(), self.jackin_channels) # BranchingMixin
 				starter()
+			elif oftype==6: # FEATURES_REPLY
+				self.jackin_path()
 		
 		return message
 	
@@ -528,6 +530,8 @@ class MonitorChannel(BranchingChannel):
 				assert hasattr(self, "monitor_server"), "requires BranchingMixin, which will be provided by I/O utility class"
 				self.monitor, starter, self.monitor_halt, addr = self.monitor_server(self.monitor_path(), self.monitor_channels) # BranchingMixin
 				starter()
+			elif oftype==6: # FEATURES_REPLY
+				self.monitor_path()
 			
 			if self.monitor_channels:
 				for ch in self.monitor_channels:
@@ -549,7 +553,8 @@ class ChildChannel(OpenflowChannel):
 	def close(self):
 		super(ChildChannel, self).close()
 		if self.channels is not None:
-			self.channels.remove(self)
+			if self in self.channels:
+				self.channels.remove(self)
 	
 	def handle(self, message, channel):
 		pass # ignore all messages
@@ -664,8 +669,8 @@ class ChannelStreamServer(SocketServer.TCPServer):
 	def channel_handle(self, request, client_address):
 		ch = self.channel_cls(
 			socket=request,
-			client_address=client_address,
-			server_address=self.server_address)
+			remote_address=client_address,
+			local_address=self.server_address)
 		if request.gettimeout() is None:
 			request.settimeout(0.5)
 		ch.messages = read_message(request.recv, health_check=self.shutdown_requested)
