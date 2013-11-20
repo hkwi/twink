@@ -61,7 +61,11 @@ class BranchingMixin(object):
 
 # fortunatelly, gevent server handle is a duck.
 class ChannelStreamServer(gevent.server.StreamServer):
-	channel_cls = None
+	channel_cls = None # we must be override
+	def __init__(self, *args, **kwargs):
+		super(ChannelStreamServer, self).__init__(*args, **kwargs)
+		self.channels = set()
+	
 	def handle(self, *args):
 		socket, client_address = args
 		ch = self.channel_cls(
@@ -69,18 +73,26 @@ class ChannelStreamServer(gevent.server.StreamServer):
 			remote_address=client_address,
 			local_address=self.address)
 		ch.messages = read_message(socket.recv)
+		self.channels.add(ch)
 		ch.start()
 		ch.loop()
 		ch.close()
+		self.channels.remove(ch)
+	
+	def close(self):
+		for ch in self.channels:
+			gevent.spawn(ch.close)
+		super(ChannelStreamServer, self).close()
+
 
 class ChannelDatagramServer(gevent.server.DatagramServer):
-	channel_cls = None
-	channels = None
+	channel_cls = None # we must be override
+	def __init__(self, *args, **kwargs):
+		super(ChannelDatagramServer, self).__init__(*args, **kwargs)
+		self.channels = {}
+	
 	def handle(self, *args):
 		data, client_address = args
-		
-		if self.channels is None:
-			self.channels = {}
 		
 		ch = self.channels.get(client_address)
 		if ch is None:
@@ -98,7 +110,14 @@ class ChannelDatagramServer(gevent.server.DatagramServer):
 		if f.tell() < len(data):
 			warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
 		ch.messages = None
-
+		
+		if ch.closed:
+			del(self.channels[client_address])
+	
+	def close(self):
+		for addr,ch in self.channels.items():
+			gevent.spawn(ch.close)
+		super(ChannelDatagramServer, self).close()
 
 def serve_forever(*servers, **opts):
 	for server in servers:

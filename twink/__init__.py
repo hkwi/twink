@@ -484,6 +484,7 @@ class JackinChannel(BranchingChannel):
 		if self.jackin:
 			self.jackin_halt()
 			os.remove(self.jackin_path())
+			self.jackin = None
 	
 	def recv(self):
 		message = super(JackinChannel, self).recv()
@@ -515,6 +516,7 @@ class MonitorChannel(BranchingChannel):
 		if self.monitor:
 			self.monitor_halt() # BranchingMixin
 			os.remove(self.monitor_path())
+			self.monitor = None
 	
 	def recv(self):
 		message = super(MonitorChannel, self).recv()
@@ -626,9 +628,9 @@ class SyncChannel(OpenflowChannel):
 			return self._sync_simple(20, 21) # OFPT_BARRIER_REQUEST=20 (v1.1, v1.2, v1.3)
 	
 	def single(self, message, **kwargs):
-		return self.multi(message, **kwargs).pop()
+		return self.multi((message,), **kwargs).pop()
 	
-	def multi(self, *messages, **kwargs):
+	def multi(self, messages, **kwargs):
 		prepared = []
 		for message in messages:
 			(version, oftype, length, xid) = parse_ofp_header(message)
