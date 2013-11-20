@@ -19,11 +19,12 @@ class Channel(object):
 	def __init__(self, *args, **kwargs):
 		self._socket = kwargs.get("socket") # dedicated socket
 		self._sendto = kwargs.get("sendto") # only if channel prefers sendto()
-		self._peer = kwargs.get("peer")
+		self.remote_address = kwargs.get("remote_address")
+		self.local_address = kwargs.get("local_address")
 	
 	@property
 	def closed(self):
-		return self._peer is None
+		return self.remote_address is None
 	
 	def close(self):
 		if self._socket:
@@ -33,12 +34,12 @@ class Channel(object):
 # 		if self.messages:
 # 			self.messages.close()
 # 		
-		if self._peer:
-			self._peer = None
+		if self.remote_address:
+			self.remote_address = None
 	
 	def send(self, message, **kwargs):
 		if self._sendto:
-			self._sendto(message, self._peer)
+			self._sendto(message, self.remote_address)
 		elif self._socket:
 			self._socket.send(message)
 		else:
@@ -246,7 +247,8 @@ class OpenflowChannel(Channel):
 	
 	def attach(self, stream_socket, **kwargs):
 		self._socket = stream_socket
-		self._peer = stream_socket.getpeername()
+		self.remote_address = stream_socket.getpeername()
+		self.local_address = stream_socket.getsockname()
 		
 		opts = {"interactive":True,}
 		opts.update(kwargs)
@@ -461,8 +463,10 @@ class BranchingChannel(OpenflowChannel):
 		old = self.socket_path("unknown-%x.%s" % (os.getpid(), suffix))
 		if self.datapath:
 			new = self.socket_path("%x-%x.%s" % (self.datapath, os.getpid(), suffix))
-			if os.stat(old):
+			try:
 				os.rename(old, new)
+			except OSError:
+				pass
 			return new
 		return old
 
@@ -620,7 +624,29 @@ class SyncChannel(OpenflowChannel):
 			return self._sync_simple(18, 19) # OFPT_BARRIER_REQUEST=18 (v1.0)
 		else:
 			return self._sync_simple(20, 21) # OFPT_BARRIER_REQUEST=20 (v1.1, v1.2, v1.3)
-
+	
+	def single(self, message, **kwargs):
+		return self.multi(message, **kwargs).pop()
+	
+	def multi(self, *messages, **kwargs):
+		prepared = []
+		for message in messages:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			assert hasattr(self, "event"), "SyncChannel requires BranchingMixin and server loop"
+			x = SyncTracker(xid, self.event())
+			self.syncs[x.xid] = x
+			self.send(message, **kwargs)
+			prepared.append(xid)
+		
+		self.barrier()
+		results = []
+		for xid in prepared:
+			if xid in self.syncs:
+				results.append(self.syncs[xid].data)
+				del(self.syncs[xid])
+			else:
+				results.append(None)
+		return results
 
 #
 # SocketServer.TCPServer, SocketServer.UnixStreamServer
@@ -636,7 +662,8 @@ class ChannelStreamServer(SocketServer.TCPServer):
 	def channel_handle(self, request, client_address):
 		ch = self.channel_cls(
 			socket=request,
-			peer=client_address)
+			client_address=client_address,
+			server_address=self.server_address)
 		if request.gettimeout() is None:
 			request.settimeout(0.5)
 		ch.messages = read_message(request.recv, health_check=self.shutdown_requested)
@@ -671,7 +698,8 @@ class ChannelUDPServer(SocketServer.UDPServer):
 		if ch is None:
 			ch = self.channel_cls(
 				sendto=self.sendto,
-				peer=client_address)
+				remote_address=client_address,
+				local_address=self.server_address)
 			self.channels[client_address] = ch
 			ch.start()
 		

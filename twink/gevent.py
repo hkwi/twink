@@ -55,6 +55,7 @@ class BranchingMixin(object):
 			"accept_versions":[self.version,],
 			"parent": self,
 			"channels": self.jackin_channels })
+		serv.start() # serv.address will be replaced
 		return serv, serv.start, serv.stop, serv.address
 
 
@@ -65,7 +66,8 @@ class ChannelStreamServer(gevent.server.StreamServer):
 		socket, client_address = args
 		ch = self.channel_cls(
 			socket=socket,
-			peer=client_address)
+			remote_address=client_address,
+			local_address=self.address)
 		ch.messages = read_message(socket.recv)
 		ch.start()
 		ch.loop()
@@ -84,7 +86,8 @@ class ChannelDatagramServer(gevent.server.DatagramServer):
 		if ch is None:
 			ch = self.channel_cls(
 				sendto=self.sendto,
-				peer=client_address)
+				remote_address=client_address,
+				local_address=self.address)
 			self.channels[client_address] = ch
 			ch.start()
 		

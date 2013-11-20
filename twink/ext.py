@@ -1,10 +1,13 @@
+from __future__ import absolute_import
+from . import *
 import struct
+from collections import namedtuple
 
 class PortMonitorChannel(ControllerChannel):
-	def __init__(self, *args, *kwargs):
+	def __init__(self, *args, **kwargs):
 		super(PortMonitorChannel, self).__init__(*args, **kwargs)
-		self.ports = []
-		self.ports_init = self.event()
+		self._ports = []
+		self._ports_init = self.event()
 		self._port_monitor_multi = dict()
 	
 	def recv(self):
@@ -39,10 +42,10 @@ class PortMonitorChannel(ControllerChannel):
 						offset += struct.calcsize(ofp_port)
 				
 					if not flags&1:
-						self.ports = ports
-						self.ports_init.set()
+						self._ports = ports
+						self._ports_init.set()
 						del(self._port_monitor_multi[xid])
-			elif oftype==6 and channel.version != 4: # FEATURES_REPLY
+			elif oftype==6 and self.version != 4: # FEATURES_REPLY
 				fmt = "!BBHIQIB3x"
 				assert struct.calcsize(fmt) % 8 == 0
 				offset = struct.calcsize(fmt+"II")
@@ -52,30 +55,31 @@ class PortMonitorChannel(ControllerChannel):
 					port[2] = port[2].partition('\0')[0]
 					ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 					offset += struct.calcsize(ofp_port)
-				self.ports = ports
-				self.ports_init.set()
+				self._ports = ports
+				self._ports_init.set()
 			elif oftype==12: # PORT_STATUS
 				p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
 				reason = p[0]
 				port = list(p[1:])
 				port[2] = port[2].partition('\0')[0]
 				self.update_port(reason, namedtuple("ofp_port", ofp_port_names)(*port))
+		return message
 	
 	def update_port(self, reason, port):
-		ports = self.ports
+		ports = self._ports
 		hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
 		if reason==0: # ADD
-			if self.ports_init.is_set():
+			if self._ports_init.is_set():
 				assert not hit
 			ports.append(port)
 		elif reason==1: # DELETE
-			if self.ports_init.is_set():
+			if self._ports_init.is_set():
 				assert hit
 			if hit:
 				assert len(hit) == 1
 				ports.remove(hit.pop())
 		elif reason==2: # MODIFY
-			if self.ports_init.is_set():
+			if self._ports_init.is_set():
 				assert hit
 			if hit:
 				assert len(hit) == 1
@@ -83,26 +87,27 @@ class PortMonitorChannel(ControllerChannel):
 			ports.append(port)
 		else:
 			assert False, "unknown reason %d" % reason
-		self.ports = ports
+		self._ports = ports
 	
-	def get_ports(self, channel):
-		if not self.ports_init.is_set():
-			if channel.version in (4, 5):
+	@property
+	def ports(self):
+		if not self._ports_init.is_set():
+			if self.version in (4, 5):
 				xid = hms_xid()
-				self.multi[xid] = []
-				channel.send(struct.pack("!BBHIHH4x", channel.version, 
+				self._port_monitor_multi[xid] = []
+				self.send(struct.pack("!BBHIHH4x", self.version, 
 					18, # MULTIPART_REQUEST (v1.3, v1.4)
 					16, # struct.calcsize(fmt)==16
 					xid, 
 					13, # PORT_DESC
 					0, # no REQ_MORE
-					), None)
+					))
 			else:
-				channel.send(ofp_header_only(5, version=channel.version), None) # FEATURES_REQUEST
-			self.ports_init.wait()
-		return self.ports
+				self.send(ofp_header_only(5, version=self.version)) # FEATURES_REQUEST
+			self._ports_init.wait()
+		return self._ports
 	
 	def close(self):
-		self.ports_init.set() # unlock the event
+		self._ports_init.set() # unlock the event
 		super(PortMonitorChannel, self).close()
 
