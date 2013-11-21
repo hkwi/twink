@@ -18,10 +18,9 @@ class HandleInThreadChannel(OpenflowChannel):
 		try:
 			super(HandleInThreadChannel, self).handle_proxy(handle)(message, channel)
 		except ChannelClose:
-			pass
+			channel.close()
 		except:
-			logging.error("handle failed", exc_info=True)
-		finally:
+			logging.error("handle error", exc_info=True)
 			channel.close()
 
 
