@@ -578,6 +578,7 @@ class SyncTracker(object):
 
 class SyncChannel(OpenflowChannel):
 	def __init__(self, *args, **kwargs):
+		assert hasattr(self, "_handle_in_parallel")
 		super(SyncChannel, self).__init__(*args, **kwargs)
 		self.syncs = {}
 	
@@ -603,18 +604,19 @@ class SyncChannel(OpenflowChannel):
 	
 	def _sync_simple(self, req_oftype, res_oftype):
 		message = self.send_sync(ofp_header_only(req_oftype, version=self.version))
-		(version, oftype, length, xid) = parse_ofp_header(message)
-		if oftype == res_oftype:
-			return message
+		if message:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if oftype != res_oftype:
+				raise OpenflowError(message)
 		else:
-			raise OpenflowError(message)
+			raise ChannelClose("no response")
+		return message
 	
 	def close(self):
 		if self.syncs is not None:
 			for k,x in self.syncs.items():
 				x.data = ""
 				x.ev.set()
-			self.syncs = {}
 		super(SyncChannel, self).close()
 	
 	def echo(self):
@@ -702,6 +704,12 @@ class ChannelUDPServer(SocketServer.UDPServer):
 			self.channels = {}
 		
 		ch = self.channels.get(client_address)
+		for message in read_message(StringIO.StringIO(data).read):
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if ch and oftype==0:
+				ch.close()
+				ch = None
+		
 		if ch is None:
 			ch = self.channel_cls(
 				sendto=self.sendto,
@@ -714,10 +722,10 @@ class ChannelUDPServer(SocketServer.UDPServer):
 		f = StringIO.StringIO(data)
 		ch.messages = read_message(f.read)
 		ch.loop()
-		
 		if f.tell() < len(data):
 			warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
 		ch.messages = None
+		
 		if ch.closed:
 			del(self.channels[client_address])
 

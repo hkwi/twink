@@ -9,20 +9,20 @@ class HandleInThreadChannel(OpenflowChannel):
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
 			args = []
-			th = threading.Thread(target=self.handle_in_thread, args=args)
-			args.extend([th, handle, message, channel])
+			th = threading.Thread(target=self._handle_in_parallel, args=args)
+			args.extend([handle, message, channel])
 			th.start()
 		return intercept
 	
-	def handle_in_thread(self, th, handle, message, channel):
+	def _handle_in_parallel(self, handle, message, channel):
 		try:
 			super(HandleInThreadChannel, self).handle_proxy(handle)(message, channel)
 		except ChannelClose:
-			channel.close()
+			pass
 		except:
 			logging.error("handle failed", exc_info=True)
+		finally:
 			channel.close()
-			raise
 
 
 class BranchingMixin(object):

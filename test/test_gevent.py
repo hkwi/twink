@@ -12,9 +12,10 @@ def server_handle(message, channel):
 	version, oftype, l, xid = twink.parse_ofp_header(message)
 	if oftype == 0:
 		msg = channel.echo()
-		version, oftype, l, xid = twink.parse_ofp_header(msg)
-		channel.close()
-		gevent.spawn(lambda:main_ev.set())
+		if msg:
+			version, oftype, l, xid = twink.parse_ofp_header(msg)
+			channel.close()
+			gevent.spawn(lambda:main_ev.set())
 
 def client_handle(message, channel):
 	pass

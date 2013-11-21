@@ -10,17 +10,17 @@ class HandleInSpawnChannel(OpenflowChannel):
 	def handle_proxy(self, handle):
 		if handle:
 			def intercept(message, channel):
-				def closing_intercept(message, channel):
-					try:
-						handle(message, channel)
-					except ChannelClose:
-						channel.close()
-					except:
-						channel.close()
-						raise
-				gevent.spawn(closing_intercept, message, channel)
+				gevent.spawn(self._handle_in_parallel, handle, message, channel)
 			return intercept
 		return handle
+	
+	def _handle_in_parallel(self, handle, message, channel):
+		try:
+			handle(message, channel)
+		except ChannelClose:
+			pass
+		finally:
+			channel.close()
 
 
 class BranchingMixin(object):
