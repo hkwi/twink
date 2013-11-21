@@ -12,8 +12,12 @@ import weakref
 
 class Channel(object):
 	'''
-	Openflow abstract connection class, not only for TCP but also for UDP.
+	Openflow abstract connection class
+	
+	This is not only for TCP but also for UDP.
 	This is the reason that the name is not "Connection" but "Channel".
+	You can subclass this to have instance members, of which lifecycle is 
+	the same with channel.
 	'''
 	messages = None
 	def __init__(self, *args, **kwargs):
