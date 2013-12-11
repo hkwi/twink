@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from . import *
 import struct
+import weakref
 from collections import namedtuple
 
 class PortMonitorChannel(ControllerChannel):
@@ -9,6 +10,9 @@ class PortMonitorChannel(ControllerChannel):
 		self._ports = []
 		self._ports_init = self.event()
 		self._port_monitor_multi = dict()
+		
+		self._attach = weakref.WeakValueDictionary()
+		self._detach = weakref.WeakValueDictionary()
 	
 	def recv(self):
 		message = super(PortMonitorChannel, self).recv()
@@ -83,8 +87,12 @@ class PortMonitorChannel(ControllerChannel):
 				assert hit
 			if hit:
 				assert len(hit) == 1
-				ports.remove(hit.pop())
-			ports.append(port)
+				old = hit.pop()
+				idx = ports.index(old)
+				ports.remove(old)
+				ports.insert(idx, port)
+			else:
+				ports.append(port)
 		else:
 			assert False, "unknown reason %d" % reason
 		self._ports = ports
@@ -105,9 +113,62 @@ class PortMonitorChannel(ControllerChannel):
 			else:
 				self.send(ofp_header_only(5, version=self.version)) # FEATURES_REQUEST
 			self._ports_init.wait()
-		return self._ports
+		return tuple(self._ports)
+	
+	@ports.setter
+	def ports(self, new_ports):
+		old_ports = self.ports
+		
+		old_nums = set([p.port_no for port in self.ports])
+		old_names = set([p.name for port in self.ports])
+		new_nums = set([p.port_no for port in value])
+		new_names = set([p.name for port in value])
+		
+		for port in old_ports:
+			if port.port_no in old_nums-new_nums:
+				s = self._detach[port.port_no]
+				if s:
+					s.set(port)
+			if port.name in old_names-new_names:
+				s = self._detach[port.name]
+				if s:
+					s.set(port)
+		
+		for port in new_ports:
+			if port.port_no in new_nums-old_nums:
+				s = self._attach[port.port_no]
+				if s:
+					s.set(port)
+			if port.name in new_names-old_names:
+				s = self._attach[port.name]
+				if s:
+					s.set(port)
+		
+		self._ports = new_ports
 	
 	def close(self):
 		self._ports_init.set() # unlock the event
 		super(PortMonitorChannel, self).close()
-
+	
+	def wait_attach(self, num_or_name):
+		for port in self.ports:
+			if port.port_no == num_or_name or port.name == num_or_name:
+				return port
+		
+		result = self._attach[num_or_name]
+		if not result:
+			self._attach[num_or_name] = result = gevent.event.AsyncResult()
+		return result.get()
+	
+	def wait_detach(self, num_or_name):
+		hit = False
+		for port in self.ports:
+			if port.port_no == num_or_name or port.name == num_or_name:
+				hit = True
+		if not hit:
+			return None # already detached
+		
+		result = self._detach[num_or_name]
+		if not result:
+			self._detach[num_or_name] = result = gevent.event.AsyncResult()
+		return result.get()
