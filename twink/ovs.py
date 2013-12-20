@@ -96,17 +96,47 @@ class OvsChannel(OpenflowChannel):
 			for ch in self.ovsproxy_channels:
 				ch.close()
 
+class AutoPacketOut(OvsChannel):
+	'''
+	openvswitch-switch sometimes sends dummy OFPT_PACKET_IN instead of sending OFPT_ECHO_REQUEST.
+	We must send OFPT_PACKET_OUT, or openvswitch-switch thinks the connection is dead.
+	'''
+	auto_packet_out = True
+	
+	def handle_proxy(self, handle):
+		def intercept(message, channel):
+			if message:
+				if self.auto_packet_out:
+					(version, oftype, length, xid) = parse_ofp_header(message)
+					if oftype == 10:
+						(buffer_id,) = struct.unpack_from("!I", message, offset=8)
+						if version==1:
+							self.send(struct.pack("!BBHIIHH", version, 13, struct.calcsize("!BBHIIHH"), xid,
+								buffer_id, 0xffff, 0))
+						else:
+							self.send(struct.pack("!BBHIIIH6x", version, 13, struct.calcsize("!BBHIIIH6x"), xid,
+								buffer_id, 0xfffffffd, 0))
+						return
+				
+				super(AutoPacketOut, self).handle_proxy(handle)(message, channel)
+		return intercept
+
 if __name__=="__main__":
-	from standard import *
+	from . import threading
 	logging.basicConfig(level=logging.DEBUG)
 	
-	@staticmethod
 	def handle(message, channel):
-		if message:
-			(version, oftype, length, xid) = parse_ofp_header(message)
-			if oftype == 0:
-				print channel.ofctl("dump-flows")
+		pass
 	
-	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
-	tcpserv.channel_cls = type("TestChannel",(OvsChannel, BranchingMixin, ControllerChannel, AutoEchoChannel, LoggingChannel, HandleInThreadChannel),{"accept_versions":[4,], "handle":handle})
-	serve_forever(tcpserv)
+	tcpserv = ChannelStreamServer(("0.0.0.0", 6633), StreamRequestHandler)
+	tcpserv.channel_cls = type("TestChannel", (
+		AutoPacketOut,
+		threading.BranchingMixin,
+		ControllerChannel,
+		AutoEchoChannel,
+		LoggingChannel,
+		threading.HandleInThreadChannel),{
+			"accept_versions":[1,4,],
+			"handle": staticmethod(handle)
+		})
+	threading.serve_forever(tcpserv)
