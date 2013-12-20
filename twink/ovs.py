@@ -131,6 +131,7 @@ if __name__=="__main__":
 	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
 	tcpserv.channel_cls = type("TestChannel", (
 		AutoPacketOut,
+		JackinChannel,
 		threading.BranchingMixin,
 		ControllerChannel,
 		AutoEchoChannel,
