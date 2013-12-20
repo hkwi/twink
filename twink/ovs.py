@@ -128,7 +128,7 @@ if __name__=="__main__":
 	def handle(message, channel):
 		pass
 	
-	tcpserv = ChannelStreamServer(("0.0.0.0", 6633), StreamRequestHandler)
+	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
 	tcpserv.channel_cls = type("TestChannel", (
 		AutoPacketOut,
 		threading.BranchingMixin,
