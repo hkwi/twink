@@ -32,7 +32,7 @@ class OvsChannel(OpenflowChannel):
 			p = self.subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
-				logging.error(pstderr, exc_info=True)
+				logging.getLogger(__name__).error(pstderr, exc_info=True)
 			return pstdout
 		finally:
 			halt()

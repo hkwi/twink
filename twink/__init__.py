@@ -88,10 +88,7 @@ class Error(Exception):
 class ChannelClose(Error):
 	pass
 
-class OfpVersionMismatch(Error):
-	pass
-
-class OpenflowError(Error): # Openflow protocol error
+class OpenflowError(Error): # Openflow protocol error for inner method calls
 	def __init__(self, message):
 		vals = list(struct.unpack_from("!BBHIHH", message))
 		vals.append(binascii.b2a_hex(message[struct.calcsize("!BBHIHH"):]))
@@ -295,8 +292,7 @@ class OpenflowChannel(Channel):
 					self.send(struct.pack("!BBHIHH", max(accept_versions), 1,
 						struct.calcsize("!BBHIHH")+len(ascii_txt), hms_xid(),
 						0, 0) + ascii_txt)
-					self.close()
-					raise OfpVersionMismatch(ascii_txt)
+					raise ChannelClose(ascii_txt)
 		return message
 	
 	def handle_proxy(self, handle):
@@ -592,18 +588,29 @@ class SyncChannel(OpenflowChannel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if xid in self.syncs:
 				x = self.syncs[xid]
-				x.data = message
-				x.ev.set()
+				if (version==1 and oftype==17) or (version!=1 and oftype==19):
+					with self.lock:
+						if x.data is None:
+							x.data = message
+						else:
+							x.data += message
+					if not struct.unpack_from("!H", message, offset=10)[0] & 1:
+						x.ev.set()
+				else:
+					x.data = message
+					x.ev.set()
 		return message
 	
 	def send_sync(self, message, **kwargs):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		assert hasattr(self, "event"), "SyncChannel requires BranchingMixin and server loop"
 		x = SyncTracker(xid, self.event())
-		self.syncs[x.xid] = x
+		with self.lock:
+			self.syncs[x.xid] = x
 		self.send(message, **kwargs)
 		x.ev.wait()
-		del(self.syncs[x.xid])
+		with self.lock:
+			self.syncs.pop(x.xid)
 		return x.data
 	
 	def _sync_simple(self, req_oftype, res_oftype):
@@ -647,7 +654,8 @@ class SyncChannel(OpenflowChannel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			assert hasattr(self, "event"), "SyncChannel requires BranchingMixin and server loop"
 			x = SyncTracker(xid, self.event())
-			self.syncs[x.xid] = x
+			with self.lock:
+				self.syncs[x.xid] = x
 			self.send(message, **kwargs)
 			prepared.append(xid)
 		
@@ -656,7 +664,8 @@ class SyncChannel(OpenflowChannel):
 		for xid in prepared:
 			if xid in self.syncs:
 				results.append(self.syncs[xid].data)
-				del(self.syncs[xid])
+				with self.lock:
+					self.syncs.pop(xid)
 			else:
 				results.append(None)
 		return results

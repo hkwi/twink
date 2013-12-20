@@ -6,7 +6,19 @@ import gevent.pool
 import gevent.monkey
 import gevent.subprocess
 
+class _DummyLock(object):
+	def _noop(self, *args, **kwargs):
+		pass
+	
+	acquire = _noop
+	release = _noop
+	__enter__ = _noop
+	__exit__ = _noop
+
+
 class HandleInSpawnChannel(OpenflowChannel):
+	lock = _DummyLock()
+	
 	def handle_proxy(self, handle):
 		if handle:
 			def intercept(message, channel):

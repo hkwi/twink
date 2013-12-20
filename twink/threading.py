@@ -6,6 +6,10 @@ import threading
 import subprocess
 
 class HandleInThreadChannel(OpenflowChannel):
+	def __init__(self, *args, **kwargs):
+		super(HandleInThreadChannel, self).__init__(*args, **kwargs)
+		self.lock = threading.RLock()
+	
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
 			args = []

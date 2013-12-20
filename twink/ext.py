@@ -31,7 +31,7 @@ class PortMonitorChannel(ControllerChannel):
 				ofp_port = "!IH2x6s2x6sII"
 				ofp_port_names = '''port_no length hw_addr name
 					config state'''
-		
+			
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if xid in self._port_monitor_multi and oftype==19: # MULTIPART_REPLY
 				assert self.version in (4,5)
@@ -46,9 +46,10 @@ class PortMonitorChannel(ControllerChannel):
 						offset += struct.calcsize(ofp_port)
 				
 					if not flags&1:
-						self._ports = ports
-						self._ports_init.set()
-						del(self._port_monitor_multi[xid])
+						with self.lock:
+							self._ports_replace(ports)
+							self._ports_init.set()
+							del(self._port_monitor_multi[xid])
 			elif oftype==6 and self.version != 4: # FEATURES_REPLY
 				fmt = "!BBHIQIB3x"
 				assert struct.calcsize(fmt) % 8 == 0
@@ -59,50 +60,65 @@ class PortMonitorChannel(ControllerChannel):
 					port[2] = port[2].partition('\0')[0]
 					ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 					offset += struct.calcsize(ofp_port)
-				self._ports = ports
-				self._ports_init.set()
+				with self.lock:
+					self._ports_replace(ports)
+					self._ports_init.set()
 			elif oftype==12: # PORT_STATUS
 				p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
 				reason = p[0]
 				port = list(p[1:])
 				port[2] = port[2].partition('\0')[0]
-				self.update_port(reason, namedtuple("ofp_port", ofp_port_names)(*port))
+				self._update_port(reason, namedtuple("ofp_port", ofp_port_names)(*port))
 		return message
 	
-	def update_port(self, reason, port):
-		ports = self._ports
-		hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
-		if reason==0: # ADD
-			if self._ports_init.is_set():
-				assert not hit
-			ports.append(port)
-		elif reason==1: # DELETE
-			if self._ports_init.is_set():
-				assert hit
-			if hit:
-				assert len(hit) == 1
-				ports.remove(hit.pop())
-		elif reason==2: # MODIFY
-			if self._ports_init.is_set():
-				assert hit
-			if hit:
-				assert len(hit) == 1
-				old = hit.pop()
-				idx = ports.index(old)
-				ports.remove(old)
-				ports.insert(idx, port)
-			else:
+	def _update_port(self, reason, port):
+		with self.lock:
+			ports = self._ports
+			hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
+			if reason==0: # ADD
+				if self._ports_init.is_set():
+					assert not hit
 				ports.append(port)
-		else:
-			assert False, "unknown reason %d" % reason
-		self._ports = ports
+				
+				with self.lock:
+					s = self._attach.get(port.port_no, self._attach.get(port.name))
+					if s:
+						s.set(port)
+						self._attach.pop(s)
+			elif reason==1: # DELETE
+				if self._ports_init.is_set():
+					assert hit
+				if hit:
+					assert len(hit) == 1
+					ports.remove(hit.pop())
+				
+				with self.lock:
+					s = self._detach.get(port.port_no, self._detach.get(port.name))
+					if s:
+						s.set(port)
+						self._detach.pop(s)
+			elif reason==2: # MODIFY
+				if self._ports_init.is_set():
+					assert hit
+				if hit:
+					assert len(hit) == 1
+					old = hit.pop()
+					idx = ports.index(old)
+					ports.remove(old)
+					ports.insert(idx, port)
+				else:
+					ports.append(port)
+			else:
+				assert False, "unknown reason %d" % reason
+			self._ports = ports
 	
 	@property
 	def ports(self):
 		if not self._ports_init.is_set():
 			if self.version in (4, 5):
 				xid = hms_xid()
-				self._port_monitor_multi[xid] = []
+				with self.lock:
+					self._port_monitor_multi[xid] = []
 				self.send(struct.pack("!BBHIHH4x", self.version, 
 					18, # MULTIPART_REQUEST (v1.3, v1.4)
 					16, # struct.calcsize(fmt)==16
@@ -115,8 +131,7 @@ class PortMonitorChannel(ControllerChannel):
 			self._ports_init.wait()
 		return tuple(self._ports)
 	
-	@ports.setter
-	def ports(self, new_ports):
+	def _ports_replace(self, new_ports):
 		old_ports = self.ports
 		
 		old_nums = set([p.port_no for port in self.ports])
@@ -126,23 +141,31 @@ class PortMonitorChannel(ControllerChannel):
 		
 		for port in old_ports:
 			if port.port_no in old_nums-new_nums:
-				s = self._detach[port.port_no]
-				if s:
-					s.set(port)
+				with self.lock:
+					s = self._detach[port.port_no]
+					if s:
+						s.set(port)
+						self._detach.pop(s)
 			if port.name in old_names-new_names:
-				s = self._detach[port.name]
-				if s:
-					s.set(port)
+				with self.lock:
+					s = self._detach[port.name]
+					if s:
+						s.set(port)
+						self._detach.pop(s)
 		
 		for port in new_ports:
 			if port.port_no in new_nums-old_nums:
-				s = self._attach[port.port_no]
-				if s:
-					s.set(port)
+				with self.lock:
+					s = self._attach[port.port_no]
+					if s:
+						s.set(port)
+						self._attach.pop(s)
 			if port.name in new_names-old_names:
-				s = self._attach[port.name]
-				if s:
-					s.set(port)
+				with self.lock:
+					s = self._attach[port.name]
+					if s:
+						s.set(port)
+						self._attach.pop(s)
 		
 		self._ports = new_ports
 	
@@ -150,25 +173,35 @@ class PortMonitorChannel(ControllerChannel):
 		self._ports_init.set() # unlock the event
 		super(PortMonitorChannel, self).close()
 	
-	def wait_attach(self, num_or_name):
+	def wait_attach(self, num_or_name, timeout=10):
 		for port in self.ports:
 			if port.port_no == num_or_name or port.name == num_or_name:
 				return port
 		
-		result = self._attach[num_or_name]
-		if not result:
-			self._attach[num_or_name] = result = gevent.event.AsyncResult()
-		return result.get()
+		with self.lock:
+			if num_or_name not in self._attach:
+				result = self._attach[num_or_name] = self.event()
+			else:
+				result = self._attach[num_or_name]
+		
+		if result.wait(timeout=timeout):
+			for port in self.ports:
+				if port.port_no == num_or_name or port.name == num_or_name:
+					return port
 	
-	def wait_detach(self, num_or_name):
+	def wait_detach(self, num_or_name, timeout=10):
 		hit = False
 		for port in self.ports:
 			if port.port_no == num_or_name or port.name == num_or_name:
 				hit = True
 		if not hit:
-			return None # already detached
+			return num_or_name # already detached
 		
-		result = self._detach[num_or_name]
-		if not result:
-			self._detach[num_or_name] = result = gevent.event.AsyncResult()
-		return result.get()
+		with self.lock:
+			if num_or_name not in self._detach:
+				result = self._detach[num_or_name] = self.event()
+			else:
+				result = self._detach[num_or_name]
+		
+		if result.wait(timeout=timeout):
+			return num_or_name
