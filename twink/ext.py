@@ -132,23 +132,23 @@ class PortMonitorChannel(ControllerChannel):
 		return tuple(self._ports)
 	
 	def _ports_replace(self, new_ports):
-		old_ports = self.ports
+		old_ports = self._ports
 		
-		old_nums = set([p.port_no for port in self.ports])
-		old_names = set([p.name for port in self.ports])
-		new_nums = set([p.port_no for port in value])
-		new_names = set([p.name for port in value])
+		old_nums = set([p.port_no for p in old_ports])
+		old_names = set([p.name for p in old_ports])
+		new_nums = set([p.port_no for p in new_ports])
+		new_names = set([p.name for p in new_ports])
 		
 		for port in old_ports:
 			if port.port_no in old_nums-new_nums:
 				with self.lock:
-					s = self._detach[port.port_no]
+					s = self._detach.get(port.port_no)
 					if s:
 						s.set(port)
 						self._detach.pop(s)
 			if port.name in old_names-new_names:
 				with self.lock:
-					s = self._detach[port.name]
+					s = self._detach.get(port.name)
 					if s:
 						s.set(port)
 						self._detach.pop(s)
@@ -156,13 +156,13 @@ class PortMonitorChannel(ControllerChannel):
 		for port in new_ports:
 			if port.port_no in new_nums-old_nums:
 				with self.lock:
-					s = self._attach[port.port_no]
+					s = self._attach.get(port.port_no)
 					if s:
 						s.set(port)
 						self._attach.pop(s)
 			if port.name in new_names-old_names:
 				with self.lock:
-					s = self._attach[port.name]
+					s = self._attach.get(port.name)
 					if s:
 						s.set(port)
 						self._attach.pop(s)
@@ -174,7 +174,7 @@ class PortMonitorChannel(ControllerChannel):
 		super(PortMonitorChannel, self).close()
 	
 	def wait_attach(self, num_or_name, timeout=10):
-		for port in self.ports:
+		for port in self._ports:
 			if port.port_no == num_or_name or port.name == num_or_name:
 				return port
 		
@@ -185,13 +185,13 @@ class PortMonitorChannel(ControllerChannel):
 				result = self._attach[num_or_name]
 		
 		if result.wait(timeout=timeout):
-			for port in self.ports:
+			for port in self._ports:
 				if port.port_no == num_or_name or port.name == num_or_name:
 					return port
 	
 	def wait_detach(self, num_or_name, timeout=10):
 		hit = False
-		for port in self.ports:
+		for port in self._ports:
 			if port.port_no == num_or_name or port.name == num_or_name:
 				hit = True
 		if not hit:
