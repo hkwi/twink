@@ -96,7 +96,7 @@ if __name__=="__main__":
 	class TestTcpServer(ChannelStreamServer, SocketServer.ThreadingTCPServer):
 		# TCPServer is not a child of new style object, so don't use type()
 		pass
-	tcpserv = TestTcpServer(("0.0.0.0", 6633), StreamRequestHandler)
+	tcpserv = TestTcpServer(("0.0.0.0", 6653), StreamRequestHandler)
 	tcpserv.channel_cls = type("TcpChannel", (
 		SyncChannel,
 		BranchingMixin,

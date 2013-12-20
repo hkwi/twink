@@ -147,14 +147,14 @@ if __name__=="__main__":
 	logging.basicConfig(level=logging.DEBUG)
 	pool = gevent.pool.Pool(50)
 	# use spawn=pool or spawn=int kwarg to make sure Channel.close called.
-	tcpserv = ChannelStreamServer(("0.0.0.0", 6633), spawn=pool)
+	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), spawn=pool)
 	tcpserv.channel_cls = type("TcpChannel", (
 		BranchingMixin, SyncChannel, MonitorChannel, JackinChannel,
 		ControllerChannel,
 		AutoEchoChannel,
 		LoggingChannel,
 		HandleInSpawnChannel), {"accept_versions":[4,]})
-	udpserv = ChannelDatagramServer(("0.0.0.0", 6633), spawn=pool)
+	udpserv = ChannelDatagramServer(("0.0.0.0", 6653), spawn=pool)
 	udpserv.channel_cls = type("UdpChannel", (
 		BranchingMixin, SyncChannel, MonitorChannel, JackinChannel,
 		ControllerChannel,

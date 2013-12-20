@@ -675,7 +675,7 @@ class SyncChannel(OpenflowChannel):
 #
 class ChannelStreamServer(SocketServer.TCPServer):
 	# You can Mixin this class as:
-	# serv = type("Serv", (ThreadingTCPServer,ChannelStreamServer), {})(("localhost",6633). StreamHandler)
+	# serv = type("Serv", (ThreadingTCPServer,ChannelStreamServer), {})(("localhost",6653). StreamHandler)
 	timeout = 0.5
 	allow_reuse_address = True
 	channel_cls = None

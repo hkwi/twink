@@ -107,6 +107,6 @@ if __name__=="__main__":
 			if oftype == 0:
 				print channel.ofctl("dump-flows")
 	
-	tcpserv = ChannelStreamServer(("0.0.0.0", 6633), StreamRequestHandler)
+	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
 	tcpserv.channel_cls = type("TestChannel",(OvsChannel, BranchingMixin, ControllerChannel, AutoEchoChannel, LoggingChannel, HandleInThreadChannel),{"accept_versions":[4,], "handle":handle})
 	serve_forever(tcpserv)

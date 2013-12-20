@@ -33,7 +33,7 @@ def switch_proc(message, channel):
 ##
 ## TCP server openflow switch
 ##
-serv = twink.gevent.ChannelStreamServer(("0.0.0.0", 6633), spawn=100)
+serv = twink.gevent.ChannelStreamServer(("0.0.0.0", 6653), spawn=100)
 serv.channel_cls = type("Switch", (
 	twink.AutoEchoChannel,
 	twink.LoggingChannel), {
@@ -49,7 +49,7 @@ serv.serve_forever()
 ##
 # import socket
 # s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-# s.connect(("localhost", 6633))
+# s.connect(("localhost", 6653))
 # ch = type("Switch", (
 # 	twink.AutoEchoChannel,
 # 	twink.LoggingChannel), {
