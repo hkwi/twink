@@ -30,6 +30,7 @@ class HandleInSpawnChannel(OpenflowChannel):
 		try:
 			handle(message, channel)
 		except ChannelClose:
+			logging.getLogger(__name__).info("closing", exc_info=True)
 			channel.close()
 		except:
 			logging.getLogger(__name__).error("handle error", exc_info=True)
