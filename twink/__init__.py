@@ -460,9 +460,9 @@ class BranchingChannel(OpenflowChannel):
 		return os.path.abspath(path)
 	
 	def helper_path(self, suffix):
-		old = self.socket_path("unknown-%x.%s" % (os.getpid(), suffix))
+		old = self.socket_path("unknown-%x-%x.%s" % (os.getpid(), id(self), suffix))
 		if self.datapath:
-			new = self.socket_path("%x-%x.%s" % (self.datapath, os.getpid(), suffix))
+			new = self.socket_path("%x-%x-%x.%s" % (self.datapath, os.getpid(), id(self), suffix))
 			try:
 				os.rename(old, new)
 			except OSError:
