@@ -15,6 +15,7 @@ class OvsChannel(OpenflowChannel):
 		if self.ovsproxy_channels is None:
 			self.ovsproxy_channels = set()
 		
+		assert hasattr(self, "temp_server"), "requires BranchingMixin, which will be provided by I/O utility class"
 		serv, starter, halt, addr = self.temp_server(self.ovsproxy_channels)
 		starter()
 		try:
