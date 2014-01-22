@@ -96,7 +96,7 @@ class OvsChannel(OpenflowChannel):
 			for ch in self.ovsproxy_channels:
 				ch.close()
 
-class AutoPacketOut(OvsChannel):
+class AutoPacketOut(OpenflowChannel):
 	'''
 	openvswitch-switch sometimes sends dummy OFPT_PACKET_IN instead of sending OFPT_ECHO_REQUEST.
 	We must send OFPT_PACKET_OUT, or openvswitch-switch thinks the connection is dead.
@@ -131,6 +131,7 @@ if __name__=="__main__":
 	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
 	tcpserv.channel_cls = type("TestChannel", (
 		AutoPacketOut,
+		OvsChannel,
 		JackinChannel,
 		threading.BranchingMixin,
 		ControllerChannel,
