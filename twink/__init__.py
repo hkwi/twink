@@ -479,7 +479,7 @@ class JackinChannel(BranchingChannel):
 	def close(self):
 		super(JackinChannel, self).close()
 		if self.jackin_channels:
-			for ch in self.jackin_channels:
+			for ch in tuple(self.jackin_channels):
 				ch.close()
 		if self.jackin:
 			self.jackin_halt()
@@ -513,7 +513,7 @@ class MonitorChannel(BranchingChannel):
 	def close(self):
 		super(MonitorChannel, self).close()
 		if self.monitor_channels:
-			for ch in self.monitor_channels:
+			for ch in tuple(self.monitor_channels):
 				ch.close()
 		if self.monitor:
 			self.monitor_halt() # BranchingMixin
