@@ -385,10 +385,10 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
 					else:
 						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
-					super(ControllerChannel, self).send(msg)
 					
 					self.seq.append(Barrier(bxid))
 					self.seq.append(Chunk(message_handler))
+					super(ControllerChannel, self).send(msg)
 			elif isinstance(seq_last, Barrier):
 				self.seq.append(Chunk(message_handler))
 			else:
