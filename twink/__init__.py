@@ -368,6 +368,10 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 	seq = None
 	
 	def send(self, message, **kwargs):
+		with self.lock:
+			return self.locked_send(message, **kwargs)
+	
+	def locked_send(self, message, **kwargs):
 		if self.seq is None:
 			self.seq = []
 		
@@ -419,33 +423,34 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 				# bypass method call for async message
 				return super(ControllerChannel, self).handle_proxy(self.handle_async)(message, channel)
 			
-			if self.seq:
-				if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
-					chunk_drop = False
-					for e in self.seq:
-						if isinstance(e, Barrier):
-							if e.xid == xid:
-								self.seq = self.seq[self.seq.index(e)+1:]
-								if e.callback:
-									try:
-										return e.callback(message, self)
-									except CallbackDeadError:
-										pass # This should not happen
-								return True
-							else:
-								assert False, "missing barrier(xid=%d) before barrier(xid=%d)" % (e.xid, xid)
-						elif isinstance(e, Chunk):
-							assert chunk_drop==False, "dropping multiple chunks at a time"
-							chunk_drop = True
-					assert False, "got unknown barrier xid=%x" % xid
-				else:
-					e = self.seq[0]
-					if isinstance(e, Chunk):
-						if e.callback:
-							try:
-								return e.callback(message, self)
-							except CallbackDeadError:
-								del(self.seq[0])
+			with self.lock:
+				if self.seq:
+					if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
+						chunk_drop = False
+						for e in self.seq:
+							if isinstance(e, Barrier):
+								if e.xid == xid:
+									self.seq = self.seq[self.seq.index(e)+1:]
+									if e.callback:
+										try:
+											return e.callback(message, self)
+										except CallbackDeadError:
+											pass # This should not happen
+									return True
+								else:
+									assert False, "missing barrier(xid=%x) before barrier(xid=%x)" % (e.xid, xid)
+							elif isinstance(e, Chunk):
+								assert chunk_drop==False, "dropping multiple chunks at a time"
+								chunk_drop = True
+						assert False, "got unknown barrier xid=%x" % xid
+					else:
+						e = self.seq[0]
+						if isinstance(e, Chunk):
+							if e.callback:
+								try:
+									return e.callback(message, self)
+								except CallbackDeadError:
+									del(self.seq[0])
 			
 			if self.callback:
 				return self.callback(message, self)
