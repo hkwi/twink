@@ -2,9 +2,7 @@ from __future__ import absolute_import
 from . import *
 import subprocess
 
-class OvsChannel(OpenflowChannel):
-	# requires BranchingMixin
-	ovsproxy_channels = None
+class OvsChannel(ControllerChannel, ParallelChannel):
 	def add_flow(self, flow):
 		return self.ofctl("add-flow", flow)
 	
@@ -12,11 +10,7 @@ class OvsChannel(OpenflowChannel):
 		return self.ofctl("mod-flows", flow, strict=strict)
 	
 	def ofctl(self, action, *args, **options):
-		if self.ovsproxy_channels is None:
-			self.ovsproxy_channels = set()
-		
-		assert hasattr(self, "temp_server"), "requires BranchingMixin, which will be provided by I/O utility class"
-		serv, starter, halt, addr = self.temp_server(self.ovsproxy_channels)
+		starter, halt, addr = self.temp_server()
 		starter()
 		try:
 			if self.version != 1:
@@ -33,7 +27,7 @@ class OvsChannel(OpenflowChannel):
 			p = self.subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
-				logging.getLogger(__name__).error(pstderr, exc_info=True)
+				logging.getLogger(__name__).error(repr(cmd)+pstderr, exc_info=True)
 			return pstdout
 		finally:
 			halt()
@@ -90,37 +84,33 @@ class OvsChannel(OpenflowChannel):
 					ret.append(tmp)
 					ret.append(sval)
 		return ret
-	
-	def close(self):
-		super(OvsChannel, self).close()
-		if self.ovsproxy_channels:
-			for ch in self.ovsproxy_channels:
-				ch.close()
 
-class AutoPacketOut(OpenflowChannel):
+
+class AutoPacketOut(ControllerChannel):
 	'''
 	openvswitch-switch sometimes sends dummy OFPT_PACKET_IN instead of sending OFPT_ECHO_REQUEST.
 	We must send OFPT_PACKET_OUT, or openvswitch-switch thinks the connection is dead.
 	'''
 	auto_packet_out = True
 	
-	def handle_proxy(self, handle):
-		def intercept(message, channel):
-			if message:
-				if self.auto_packet_out:
-					(version, oftype, length, xid) = parse_ofp_header(message)
-					if oftype == 10:
-						(buffer_id,) = struct.unpack_from("!I", message, offset=8)
-						if version==1:
-							self.send(struct.pack("!BBHIIHH", version, 13, struct.calcsize("!BBHIIHH"), xid,
-								buffer_id, 0xffff, 0))
-						else:
-							self.send(struct.pack("!BBHIIIH6x", version, 13, struct.calcsize("!BBHIIIH6x"), xid,
-								buffer_id, 0xfffffffd, 0))
-						return
-				
-				super(AutoPacketOut, self).handle_proxy(handle)(message, channel)
-		return intercept
+	def handle_async(self, message, channel):
+		parent = super(AutoPacketOut, self)
+		if hasattr(parent, "handle_async"):
+			parent.handle_async(message, channel)
+		
+		if not self.auto_packet_out:
+			return
+		
+		(version, oftype, length, xid) = parse_ofp_header(message)
+		if oftype == 10:
+			(buffer_id,) = struct.unpack_from("!I", message, offset=8)
+			if version==1:
+				self.send(struct.pack("!BBHIIHH", version, 13, struct.calcsize("!BBHIIHH"), xid,
+					buffer_id, 0xffff, 0))
+			else:
+				self.send(struct.pack("!BBHIIIH6x", version, 13, struct.calcsize("!BBHIIIH6x"), xid,
+					buffer_id, 0xfffffffd, 0))
+
 
 if __name__=="__main__":
 	from . import threading
@@ -135,7 +125,6 @@ if __name__=="__main__":
 		OvsChannel,
 		JackinChannel,
 		threading.BranchingMixin,
-		ControllerChannel,
 		AutoEchoChannel,
 		LoggingChannel,
 		threading.HandleInThreadChannel),{

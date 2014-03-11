@@ -6,71 +6,51 @@ import gevent.pool
 import gevent.monkey
 import gevent.subprocess
 
-class _DummyLock(object):
-	def _noop(self, *args, **kwargs):
-		pass
-	
-	acquire = _noop
-	release = _noop
-	__enter__ = _noop
-	__exit__ = _noop
 
-
-class HandleInSpawnChannel(OpenflowChannel):
-	lock = _DummyLock()
-	
-	def handle_proxy(self, handle):
-		if handle:
-			def intercept(message, channel):
-				gevent.spawn(self._handle_in_parallel, handle, message, channel)
-			return intercept
-		return handle
-	
-	def _handle_in_parallel(self, handle, message, channel):
-		try:
-			handle(message, channel)
-		except ChannelClose:
-			logging.getLogger(__name__).info("closing", exc_info=True)
-			channel.close()
-		except:
-			logging.getLogger(__name__).error("handle error", exc_info=True)
-			channel.close()
-
-
-class BranchingMixin(object):
+class ParallelMixin(ParallelChannel):
+	spawn = gevent.spawn
 	subprocess = gevent.subprocess
 	event = gevent.event.Event
 	
-	def jackin_server(self, path, channels):
+	def jackin_server(self, path):
+		channels = set()
+		
 		s = gevent.socket.socket(gevent.socket.AF_UNIX, gevent.socket.SOCK_STREAM)
 		s.bind(path)
 		s.listen(50)
 		serv = ChannelStreamServer(s, spawn=50)
+		serv,channels = channels
 		serv.channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 			"accept_versions":[self.version,],
 			"parent": self,
-			"channels": self.jackin_channels })
-		return serv, serv.start, serv.stop, serv.address
+			"channels": channels })
+		return serv.start, serv.stop, serv.address
 	
-	def monitor_server(self, path, channels):
+	def monitor_server(self, path):
+		channels = set()
+		
 		s = gevent.socket.socket(gevent.socket.AF_UNIX, gevent.socket.SOCK_STREAM)
 		s.bind(path)
 		s.listen(50)
 		serv = ChannelStreamServer(s, spawn=50)
+		serv,channels = channels
 		serv.channel_cls = type("MonitorChannel",(AutoEchoChannel, LoggingChannel, ChildChannel),{
 			"accept_versions":[self.version,],
 			"parent": self,
 			"channels": channels })
-		return serv, serv.start, serv.stop, serv.address
+		return serv.start, serv.stop, serv.address
 	
-	def temp_server(self, channels):
+	def temp_server(self):
+		channels = set()
+		
 		serv = ChannelStreamServer(("127.0.0.1",0), spawn=50)
+		serv,channels = channels
 		serv.channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 			"accept_versions":[self.version,],
 			"parent": self,
-			"channels": self.jackin_channels })
+			"channels": channels })
 		serv.start() # serv.address will be replaced
-		return serv, serv.start, serv.stop, serv.address
+		return serv.start, serv.stop, serv.address
 
 
 # fortunatelly, gevent server handle is a duck.
@@ -94,8 +74,8 @@ class ChannelStreamServer(gevent.server.StreamServer):
 		self.channels.remove(ch)
 	
 	def close(self):
-		for ch in self.channels:
-			gevent.spawn(ch.close)
+		for ch in tuple(self.channels):
+			ch.close()
 		super(ChannelStreamServer, self).close()
 
 
@@ -129,8 +109,8 @@ class ChannelDatagramServer(gevent.server.DatagramServer):
 			del(self.channels[client_address])
 	
 	def close(self):
-		for addr,ch in self.channels.items():
-			gevent.spawn(ch.close)
+		for addr,ch in tuple(self.channels.items()):
+			ch.close()
 		super(ChannelDatagramServer, self).close()
 
 def serve_forever(*servers, **opts):

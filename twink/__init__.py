@@ -414,6 +414,11 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
+			
+			if hasattr(self, "handle_async") and oftype in (10,11,12):
+				# bypass method call for async message
+				return super(ControllerChannel, self).handle_proxy(self.handle_async)(message, channel)
+			
 			if self.seq:
 				if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
 					chunk_drop = False
@@ -432,7 +437,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 						elif isinstance(e, Chunk):
 							assert chunk_drop==False, "dropping multiple chunks at a time"
 							chunk_drop = True
-					assert False, "got unknown barrier xid"
+					assert False, "got unknown barrier xid=%x" % xid
 				else:
 					e = self.seq[0]
 					if isinstance(e, Chunk):
@@ -451,9 +456,35 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 		return intercept
 
 
-class BranchingChannel(OpenflowChannel):
+class DummyLock(object):
+	def _noop(self, *args, **kwargs):
+		pass
+	
+	acquire = _noop
+	release = _noop
+	__enter__ = _noop
+	__exit__ = _noop
+
+
+class ParallelChannel(OpenflowChannel):
+	lock = DummyLock()
 	# mixin for parent channel
 	socket_dir = None
+	
+	def handle_proxy(self, handle):
+		def intercept(message, channel):
+			def proxy(message, channel):
+				try:
+					handle(message, channel)
+				except ChannelClose:
+					logging.getLogger(__name__).info("closing", exc_info=True)
+					channel.close()
+				except:
+					logging.getLogger(__name__).error("handle error", exc_info=True)
+					channel.close()
+			self.spawn(proxy, message, channel)
+		return intercept
+	
 	def socket_path(self, path):
 		if self.socket_dir:
 			path = os.path.join(self.socket_dir, path)
@@ -469,82 +500,68 @@ class BranchingChannel(OpenflowChannel):
 				pass
 			return new
 		return old
+	
+	def override_required(self, *args, **kwargs):
+		raise Error("Concrete MixIn required")
+	
+	# Concrete MixIn must provide following methods
+	spawn = override_required
+	subprocess = override_required
+	event = override_required
+	jackin_server = override_required
+	monitor_server = override_required
+	temp_server = override_required
 
 
-class JackinChannel(BranchingChannel):
-	jackin = None
-	jackin_halt = None
-	jackin_channels = None
+class ParentChannel(ParallelChannel):
+	jackin = False
+	monitor = False
+	jackin_shutdown = None
+	monitor_shutdown = None
 	
 	def close(self):
-		super(JackinChannel, self).close()
-		if self.jackin_channels:
-			for ch in tuple(self.jackin_channels):
-				ch.close()
-		if self.jackin:
-			self.jackin_halt()
-			os.remove(self.jackin_path())
-			self.jackin = None
+		if self.jackin_shutdown:
+			self.jackin_shutdown()
+		
+		if self.monitor_shutdown:
+			self.monitor_shutdown()
+		
+		super(ParentChannel, self).close()
 	
 	def recv(self):
-		message = super(JackinChannel, self).recv()
+		message = super(ParentChannel, self).recv()
 		if message:
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if oftype==0:
-				if self.jackin_channels is None:
-					self.jackin_channels = set()
-				assert hasattr(self, "jackin_server"), "requires BranchingMixin, which will be provided by I/O utility class"
-				self.jackin, starter, self.jackin_halt, addr = self.jackin_server(self.jackin_path(), self.jackin_channels) # BranchingMixin
-				starter()
+				if self.jackin:
+					starter, self.jackin_halt, addr = self.jackin_server(self.helper_path("jackin"))
+					starter() # start after assignment especially for pthread
+				
+				if self.monitor:
+					starter, self.jackin_halt, addr = self.monitor_server(self.helper_path("monitor"))
+					starter() # start after assignment especially for pthread
+			
 			elif oftype==6: # FEATURES_REPLY
-				self.jackin_path()
+				if self.jackin:
+					self.helper_path("jackin")
+				if self.monitor:
+					self.helper_path("monitor")
 		
 		return message
-	
-	def jackin_path(self):
-		return self.helper_path("jackin")
 
 
-class MonitorChannel(BranchingChannel):
-	# requires BranchingMixin, which will be provided by I/O utility class
-	monitor = None
-	monitor_halt = None
-	monitor_channels = None
-	def close(self):
-		super(MonitorChannel, self).close()
-		if self.monitor_channels:
-			for ch in tuple(self.monitor_channels):
-				ch.close()
-		if self.monitor:
-			self.monitor_halt() # BranchingMixin
-			os.remove(self.monitor_path())
-			self.monitor = None
-	
-	def recv(self):
-		message = super(MonitorChannel, self).recv()
-		if message:
-			(version, oftype, length, xid) = parse_ofp_header(message)
-			if oftype==0:
-				if self.monitor_channels is None:
-					self.monitor_channels = set()
-				assert hasattr(self, "monitor_server"), "requires BranchingMixin, which will be provided by I/O utility class"
-				self.monitor, starter, self.monitor_halt, addr = self.monitor_server(self.monitor_path(), self.monitor_channels) # BranchingMixin
-				starter()
-			elif oftype==6: # FEATURES_REPLY
-				self.monitor_path()
-			
-			if self.monitor_channels:
-				for ch in self.monitor_channels:
-					ch.send(message)
-		return message
-	
-	def monitor_path(self):
-		return self.helper_path("monitor")
+class JackinChannel(ParentChannel):
+	jackin = True
+
+
+class MonitorChannel(ParentChannel):
+	monitor = True
 
 
 class ChildChannel(OpenflowChannel):
 	parent = None # must be set
-	channels = None # might be set to set()
+	channels = None
+	
 	def __init__(self, *args, **kwargs):
 		super(ChildChannel, self).__init__(*args, **kwargs)
 		if self.channels is not None:
@@ -552,9 +569,7 @@ class ChildChannel(OpenflowChannel):
 	
 	def close(self):
 		super(ChildChannel, self).close()
-		if self.channels is not None:
-			if self in self.channels:
-				self.channels.remove(self)
+		self.channels.remove(self)
 	
 	def handle(self, message, channel):
 		pass # ignore all messages
@@ -565,8 +580,8 @@ class JackinChildChannel(ChildChannel):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype!=0:
 			self.parent.send(message, callback=self.cbfunc)
-	
-	def cbfunc(self, message, origin_channel):
+#lambda message, channel: self.send(message, channel))
+	def cbfunc(self, message, upstream_channel):
 		self.send(message)
 
 
@@ -576,9 +591,9 @@ class SyncTracker(object):
 		self.ev = ev
 		self.data = None
 
-class SyncChannel(OpenflowChannel):
+
+class SyncChannel(ParallelChannel):
 	def __init__(self, *args, **kwargs):
-		assert hasattr(self, "_handle_in_parallel")
 		super(SyncChannel, self).__init__(*args, **kwargs)
 		self.syncs = {}
 	
@@ -588,7 +603,7 @@ class SyncChannel(OpenflowChannel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if xid in self.syncs:
 				x = self.syncs[xid]
-				if (version==1 and oftype==17) or (version!=1 and oftype==19):
+				if (version==1 and oftype==17) or (version!=1 and oftype==19): # multipart
 					with self.lock:
 						if x.data is None:
 							x.data = message
@@ -603,7 +618,6 @@ class SyncChannel(OpenflowChannel):
 	
 	def send_sync(self, message, **kwargs):
 		(version, oftype, length, xid) = parse_ofp_header(message)
-		assert hasattr(self, "event"), "SyncChannel requires BranchingMixin and server loop"
 		x = SyncTracker(xid, self.event())
 		with self.lock:
 			self.syncs[x.xid] = x
@@ -652,7 +666,6 @@ class SyncChannel(OpenflowChannel):
 		prepared = []
 		for message in messages:
 			(version, oftype, length, xid) = parse_ofp_header(message)
-			assert hasattr(self, "event"), "SyncChannel requires BranchingMixin and server loop"
 			x = SyncTracker(xid, self.event())
 			with self.lock:
 				self.syncs[x.xid] = x
@@ -669,6 +682,7 @@ class SyncChannel(OpenflowChannel):
 			else:
 				results.append(None)
 		return results
+
 
 #
 # SocketServer.TCPServer, SocketServer.UnixStreamServer
@@ -688,7 +702,13 @@ class ChannelStreamServer(SocketServer.TCPServer):
 			local_address=self.server_address)
 		if request.gettimeout() is None:
 			request.settimeout(0.5)
-		ch.messages = read_message(request.recv, health_check=self.shutdown_requested)
+		
+		def health_check():
+			if self._shutdown_requested or ch.closed:
+				return False
+			return True
+		
+		ch.messages = read_message(request.recv, health_check=health_check)
 		
 		ch.start()
 		try:
@@ -697,9 +717,6 @@ class ChannelStreamServer(SocketServer.TCPServer):
 			logging.error(str(e), exc_info=True)
 		finally:
 			ch.close()
-	
-	def shutdown_requested(self):
-		return not self._shutdown_requested
 	
 	def shutdown(self):
 		self._shutdown_requested = True

@@ -4,67 +4,107 @@ import signal
 import SocketServer
 import threading
 import subprocess
+try:
+	from Queue import Queue as queue
+except:
+	from queue import queue
 
-class HandleInThreadChannel(OpenflowChannel):
-	def __init__(self, *args, **kwargs):
-		super(HandleInThreadChannel, self).__init__(*args, **kwargs)
-		self.lock = threading.RLock()
+
+class Threadlet(object):
+	started = False
+	def __init__(self, func, *args, **kwargs):
+		self.result = queue()
+		def wrap():
+			try:
+				self.result.put((func(*args, **kwargs), None), False)
+			except Exception, e:
+				self.result.put((None, e), False)
+		
+		self.thread = threading.Thread(target=wrap)
 	
-	def handle_proxy(self, handle):
-		def intercept(message, channel):
-			args = []
-			th = threading.Thread(target=self._handle_in_parallel, args=args)
-			args.extend([handle, message, channel])
-			th.start()
-		return intercept
+	def start(self):
+		self.thread.start()
+		self.started = True
 	
-	def _handle_in_parallel(self, handle, message, channel):
-		try:
-			super(HandleInThreadChannel, self).handle_proxy(handle)(message, channel)
-		except ChannelClose:
-			logging.getLogger(__name__).info("closing", exc_info=True)
-			channel.close()
-		except:
-			logging.getLogger(__name__).error("handle error", exc_info=True)
-			channel.close()
+	def join(self, timeout=None):
+		if self.started:
+			return self.thread.join(timeout)
+		assert False, "join() called before start()"
+	
+	def get(self, block=True, timeout=None):
+		if self.started:
+			if self.result:
+				self.pair = self.result.get(block, timeout)
+			self.result = None
+			if self.pair[1] is None:
+				return self.pair[0]
+			else:
+				raise self.pair[1]
 
 
-class BranchingMixin(object):
+class ParallelMixin(ParallelChannel):
 	subprocess = subprocess
 	event = threading.Event
 	
-	def jackin_server(self, path, channels):
-		class JackinServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer): pass
+	def __init__(self, *args, **kwargs):
+		super(ParallelMixin, self).__init__(*args, **kwargs)
+		self.lock = threading.RLock()
+	
+	def spawn(self, func, *args, **kwargs):
+		th = Threadlet(func, *args, **kwargs)
+		th.start()
+		return th
+	
+	def jackin_server(self, path):
+		channels = set()
+		
+		class JackinServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer):
+			channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
+				"accept_versions":[self.version,],
+				"parent": self,
+				"channels": channels })
+			def shutdown(self, *args, **kwargs):
+				ChannelStreamServer.shutdown(self, *args, **kwargs)
+				for ch in tuple(channels):
+					ch.close()
+				assert not channels, "All channels must be closed"
+		
 		serv = JackinServer(path, StreamRequestHandler)
-		serv.channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
-			"accept_versions":[self.version,],
-			"parent": self,
-			"channels": channels })
-		th = threading.Thread(target=serv.serve_forever)
-		th.daemon = True
-		return serv, th.start, serv.shutdown, serv.server_address
+		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 	
-	def monitor_server(self, path, channels):
-		class MonitorServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer): pass
+	def monitor_server(self, path):
+		channels = set()
+		
+		class MonitorServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer):
+			channel_cls = type("MonitorChannel",(AutoEchoChannel, LoggingChannel, ChildChannel),{
+				"accept_versions":[self.version,],
+				"parent": self,
+				"channels": channels })
+			def shutdown(self, *args, **kwargs):
+				ChannelStreamServer.shutdown(self, *args, **kwargs)
+				for ch in tuple(channels):
+					ch.close()
+				assert not channels, "All channels must be closed"
+		
 		serv = MonitorServer(path, StreamRequestHandler)
-		serv.channel_cls = type("MonitorChannel",(AutoEchoChannel, LoggingChannel, ChildChannel),{
-			"accept_versions":[self.version,],
-			"parent": self,
-			"channels": channels })
-		th = threading.Thread(target=serv.serve_forever)
-		th.daemon = True
-		return serv, th.start, serv.shutdown, serv.server_address
+		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 	
-	def temp_server(self, channels):
-		class TempServer(SocketServer.ThreadingMixIn, ChannelStreamServer): pass
+	def temp_server(self):
+		channels = set()
+		
+		class TempServer(SocketServer.ThreadingMixIn, ChannelStreamServer):
+			channel_cls = type("TempChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
+				"accept_versions":[self.version,],
+				"parent": self,
+				"channels": channels })
+			def shutdown(self, *args, **kwargs):
+				ChannelStreamServer.shutdown(self, *args, **kwargs)
+				for ch in tuple(channels):
+					ch.close()
+				assert not channels, "All channels must be closed"
+		
 		serv = TempServer(("127.0.0.1",0), StreamRequestHandler)
-		serv.channel_cls = type("TempChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
-			"accept_versions":[self.version,],
-			"parent": self,
-			"channels": channels })
-		th = threading.Thread(target=serv.serve_forever)
-		th.daemon = True
-		return serv, th.start, serv.shutdown, serv.server_address
+		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 
 
 def serve_forever(*servers, **opts):
