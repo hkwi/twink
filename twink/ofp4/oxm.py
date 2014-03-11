@@ -38,7 +38,7 @@ ofp_ipv6exthdr_flags = type("ofp_ipv6exthdr_flags", (_enum_base,), {
 	})(globals())
 
 def _bits(oxm_field):
-	if oxm_field in (OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT, OXM_OF_PBB_ISID):
+	if oxm_field in (OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT):
 		bits = "I"
 	elif oxm_field in (OXM_OF_METADATA, OXM_OF_TUNNEL_ID):
 		bits = "Q"
@@ -54,6 +54,8 @@ def _bits(oxm_field):
 		bits = "4s"
 	elif oxm_field in (OXM_OF_IPV6_SRC, OXM_OF_IPV6_DST, OXM_OF_IPV6_ND_TARGET):
 		bits = "16s"
+	elif oxm_field in (OXM_OF_PBB_ISID, ):
+		bits = "3s"
 	else:
 		bits = "B"
 	return bits
