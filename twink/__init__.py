@@ -525,11 +525,13 @@ class ParentChannel(ParallelChannel):
 	monitor_shutdown = None
 	
 	def close(self):
-		if self.jackin_shutdown:
+		if self.jackin:
 			self.jackin_shutdown()
+			os.remove(self.helper_path("jackin"))
 		
-		if self.monitor_shutdown:
+		if self.monitor:
 			self.monitor_shutdown()
+			os.remove(self.helper_path("monitor"))
 		
 		super(ParentChannel, self).close()
 	
@@ -539,11 +541,11 @@ class ParentChannel(ParallelChannel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if oftype==0:
 				if self.jackin:
-					starter, self.jackin_halt, addr = self.jackin_server(self.helper_path("jackin"))
+					starter, self.jackin_shutdown, addr = self.jackin_server(self.helper_path("jackin"))
 					starter() # start after assignment especially for pthread
 				
 				if self.monitor:
-					starter, self.jackin_halt, addr = self.monitor_server(self.helper_path("monitor"))
+					starter, self.monitor_shutdown, addr = self.monitor_server(self.helper_path("monitor"))
 					starter() # start after assignment especially for pthread
 			
 			elif oftype==6: # FEATURES_REPLY
