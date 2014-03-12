@@ -35,9 +35,6 @@ class Channel(object):
 			self._socket.close()
 			self._socket = None
 		
-# 		if self.messages:
-# 			self.messages.close()
-# 		
 		if self.remote_address:
 			self.remote_address = None
 	
@@ -567,16 +564,6 @@ class MonitorChannel(ParentChannel):
 
 class ChildChannel(OpenflowChannel):
 	parent = None # must be set
-	channels = None
-	
-	def __init__(self, *args, **kwargs):
-		super(ChildChannel, self).__init__(*args, **kwargs)
-		if self.channels is not None:
-			self.channels.add(self)
-	
-	def close(self):
-		super(ChildChannel, self).close()
-		self.channels.remove(self)
 	
 	def handle(self, message, channel):
 		pass # ignore all messages
@@ -699,8 +686,13 @@ class ChannelStreamServer(SocketServer.TCPServer):
 	# serv = type("Serv", (ThreadingTCPServer,ChannelStreamServer), {})(("localhost",6653). StreamHandler)
 	timeout = 0.5
 	allow_reuse_address = True
+	closed = False
 	channel_cls = None
-	_shutdown_requested = False
+	channels = None
+	
+	def __init__(self, *args, **kwargs):
+		SocketServer.TCPServer.__init__(self, *args, **kwargs)
+		self.channels = set()
 	
 	def channel_handle(self, request, client_address):
 		ch = self.channel_cls(
@@ -711,22 +703,34 @@ class ChannelStreamServer(SocketServer.TCPServer):
 			request.settimeout(0.5)
 		
 		def health_check():
-			if self._shutdown_requested or ch.closed:
+			if self.closed or ch.closed:
 				return False
 			return True
 		
 		ch.messages = read_message(request.recv, health_check=health_check)
 		
+		self.channels.add(ch)
 		ch.start()
 		try:
 			ch.loop()
 		except Exception,e:
 			logging.error(str(e), exc_info=True)
 		finally:
+			if not ch.closed:
+				ch.close()
+				self.channels.remove(ch)
+	
+	def server_close(self):
+		SocketServer.TCPServer.server_close(self)
+		self.closed = True
+		for ch in tuple(self.channels):
+			if ch.closed:
+				continue
 			ch.close()
+			self.channels.remove(ch)
 	
 	def shutdown(self):
-		self._shutdown_requested = True
+		self.server_close()
 		SocketServer.TCPServer.shutdown(self)
 
 
@@ -736,15 +740,24 @@ class ChannelStreamServer(SocketServer.TCPServer):
 class ChannelUDPServer(SocketServer.UDPServer):
 	allow_reuse_address = True
 	channel_cls = None
+	channels = None
+	
+	def __init__(self, *args, **kwargs):
+		SocketServer.UDPServer.__init__(self, *arg, **kwargs)
+		self.channels = set()
+	
 	def channel_handle(self, request, client_address):
-		if self.channels is None:
-			self.channels = {}
+		ch = None
+		for tmp in self.channels:
+			if tmp.remote_address == client_address:
+				ch = tmp
+				break
 		
-		ch = self.channels.get(client_address)
 		for message in read_message(StringIO.StringIO(data).read):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if ch and oftype==0:
 				ch.close()
+				self.channels.remove(ch)
 				ch = None
 		
 		if ch is None:
@@ -752,19 +765,34 @@ class ChannelUDPServer(SocketServer.UDPServer):
 				sendto=self.sendto,
 				remote_address=client_address,
 				local_address=self.server_address)
-			self.channels[client_address] = ch
+			self.channels.add(ch)
 			ch.start()
 		
 		(data, socket) = request
 		f = StringIO.StringIO(data)
 		ch.messages = read_message(f.read)
-		ch.loop()
-		if f.tell() < len(data):
-			warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
-		ch.messages = None
-		
-		if ch.closed:
-			del(self.channels[client_address])
+		try:
+			ch.loop()
+			if f.tell() < len(data):
+				warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
+		except Exception,e:
+			logging.error(str(e), exc_info=True)
+		finally:
+			ch.messages = None
+			if ch.closed:
+				self.channels.remove(ch)
+	
+	def server_close(self):
+		SocketServer.UDPServer.server_close(self)
+		for ch in tuple(self.channels):
+			if ch.closed:
+				continue
+			ch.close()
+			self.channels.remove(ch)
+	
+	def shutdown(self, *args, **kwargs):
+		self.server_close()
+		SocketServer.UDPServer.shutdown(self, *args, **kwargs)
 
 
 # handlers

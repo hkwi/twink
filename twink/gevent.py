@@ -13,42 +13,30 @@ class ParallelMixin(ParallelChannel):
 	event = gevent.event.Event
 	
 	def jackin_server(self, path):
-		channels = set()
-		
 		s = gevent.socket.socket(gevent.socket.AF_UNIX, gevent.socket.SOCK_STREAM)
 		s.bind(path)
 		s.listen(50)
 		serv = ChannelStreamServer(s, spawn=50)
-		serv,channels = channels
 		serv.channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 			"accept_versions":[self.version,],
-			"parent": self,
-			"channels": channels })
+			"parent": self })
 		return serv.start, serv.stop, serv.address
 	
 	def monitor_server(self, path):
-		channels = set()
-		
 		s = gevent.socket.socket(gevent.socket.AF_UNIX, gevent.socket.SOCK_STREAM)
 		s.bind(path)
 		s.listen(50)
 		serv = ChannelStreamServer(s, spawn=50)
-		serv,channels = channels
 		serv.channel_cls = type("MonitorChannel",(AutoEchoChannel, LoggingChannel, ChildChannel),{
 			"accept_versions":[self.version,],
-			"parent": self,
-			"channels": channels })
+			"parent": self })
 		return serv.start, serv.stop, serv.address
 	
 	def temp_server(self):
-		channels = set()
-		
 		serv = ChannelStreamServer(("127.0.0.1",0), spawn=50)
-		serv,channels = channels
 		serv.channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 			"accept_versions":[self.version,],
-			"parent": self,
-			"channels": channels })
+			"parent": self })
 		serv.start() # serv.address will be replaced
 		return serv.start, serv.stop, serv.address
 
@@ -70,7 +58,8 @@ class ChannelStreamServer(gevent.server.StreamServer):
 		self.channels.add(ch)
 		ch.start()
 		ch.loop()
-		ch.close()
+		if not ch.closed:
+			ch.close()
 		self.channels.remove(ch)
 	
 	def close(self):
@@ -83,33 +72,40 @@ class ChannelDatagramServer(gevent.server.DatagramServer):
 	channel_cls = None # we must be override
 	def __init__(self, *args, **kwargs):
 		super(ChannelDatagramServer, self).__init__(*args, **kwargs)
-		self.channels = {}
+		self.channels = set()
 	
 	def handle(self, *args):
 		data, client_address = args
 		
-		ch = self.channels.get(client_address)
+		ch = None
+		for tmp in self.channels:
+			if tmp.remote_address == client_address:
+				ch = tmp
+				break
+		
 		if ch is None:
 			ch = self.channel_cls(
 				sendto=self.sendto,
 				remote_address=client_address,
 				local_address=self.address)
-			self.channels[client_address] = ch
+			self.channels.add(ch)
 			ch.start()
 		
 		f = StringIO.StringIO(data)
 		ch.messages = read_message(f.read)
-		ch.loop()
-		
-		if f.tell() < len(data):
-			warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
-		ch.messages = None
-		
-		if ch.closed:
-			del(self.channels[client_address])
+		try:
+			ch.loop()
+			if f.tell() < len(data):
+				warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
+		except Exception,e:
+			logging.error(str(e), exc_info=True)
+		finally:
+			ch.messages = None
+			if ch.closed:
+				self.channels.remove(ch)
 	
 	def close(self):
-		for addr,ch in tuple(self.channels.items()):
+		for ch in tuple(self.channels):
 			ch.close()
 		super(ChannelDatagramServer, self).close()
 

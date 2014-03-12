@@ -56,52 +56,28 @@ class ParallelMixin(ParallelChannel):
 		return th
 	
 	def jackin_server(self, path):
-		channels = set()
-		
 		class JackinServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer):
 			channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 				"accept_versions":[self.version,],
-				"parent": self,
-				"channels": channels })
-			def shutdown(self, *args, **kwargs):
-				ChannelStreamServer.shutdown(self, *args, **kwargs)
-				for ch in tuple(channels):
-					ch.close()
-				assert not channels, "All channels must be closed"
+				"parent": self })
 		
 		serv = JackinServer(path, StreamRequestHandler)
 		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 	
 	def monitor_server(self, path):
-		channels = set()
-		
 		class MonitorServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer):
 			channel_cls = type("MonitorChannel",(AutoEchoChannel, LoggingChannel, ChildChannel),{
 				"accept_versions":[self.version,],
-				"parent": self,
-				"channels": channels })
-			def shutdown(self, *args, **kwargs):
-				ChannelStreamServer.shutdown(self, *args, **kwargs)
-				for ch in tuple(channels):
-					ch.close()
-				assert not channels, "All channels must be closed"
+				"parent": self })
 		
 		serv = MonitorServer(path, StreamRequestHandler)
 		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 	
 	def temp_server(self):
-		channels = set()
-		
 		class TempServer(SocketServer.ThreadingMixIn, ChannelStreamServer):
 			channel_cls = type("TempChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 				"accept_versions":[self.version,],
-				"parent": self,
-				"channels": channels })
-			def shutdown(self, *args, **kwargs):
-				ChannelStreamServer.shutdown(self, *args, **kwargs)
-				for ch in tuple(channels):
-					ch.close()
-				assert not channels, "All channels must be closed"
+				"parent": self })
 		
 		serv = TempServer(("127.0.0.1",0), StreamRequestHandler)
 		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
@@ -122,7 +98,6 @@ def serve_forever(*servers, **opts):
 			ev.wait(timeout=0.5)
 	finally:
 		for serv in servers:
-			serv.server_close()
 			serv.shutdown()
 
 
