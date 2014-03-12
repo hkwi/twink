@@ -7,6 +7,7 @@ from collections import namedtuple
 class PortMonitorChannel(ControllerChannel):
 	def __init__(self, *args, **kwargs):
 		super(PortMonitorChannel, self).__init__(*args, **kwargs)
+		self._ports_lock = self.lock_cls()
 		self._ports = []
 		self._ports_init = self.event()
 		self._port_monitor_multi = dict()
@@ -46,7 +47,7 @@ class PortMonitorChannel(ControllerChannel):
 						offset += struct.calcsize(ofp_port)
 				
 					if not flags&1:
-						with self.lock:
+						with self._ports_lock:
 							self._ports_replace(ports)
 							self._ports_init.set()
 							del(self._port_monitor_multi[xid])
@@ -60,7 +61,7 @@ class PortMonitorChannel(ControllerChannel):
 					port[2] = port[2].partition('\0')[0]
 					ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 					offset += struct.calcsize(ofp_port)
-				with self.lock:
+				with self._ports_lock:
 					self._ports_replace(ports)
 					self._ports_init.set()
 			elif oftype==12: # PORT_STATUS
@@ -72,7 +73,7 @@ class PortMonitorChannel(ControllerChannel):
 		return message
 	
 	def _update_port(self, reason, port):
-		with self.lock:
+		with self._ports_lock:
 			ports = self._ports
 			hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
 			if reason==0: # ADD
@@ -80,11 +81,10 @@ class PortMonitorChannel(ControllerChannel):
 					assert not hit
 				ports.append(port)
 				
-				with self.lock:
-					s = self._attach.get(port.port_no, self._attach.get(port.name))
-					if s:
-						s.set(port)
-						self._attach.pop(s)
+				s = self._attach.get(port.port_no, self._attach.get(port.name))
+				if s:
+					s.set(port)
+					self._attach.pop(s)
 			elif reason==1: # DELETE
 				if self._ports_init.is_set():
 					assert hit
@@ -92,11 +92,10 @@ class PortMonitorChannel(ControllerChannel):
 					assert len(hit) == 1
 					ports.remove(hit.pop())
 				
-				with self.lock:
-					s = self._detach.get(port.port_no, self._detach.get(port.name))
-					if s:
-						s.set(port)
-						self._detach.pop(s)
+				s = self._detach.get(port.port_no, self._detach.get(port.name))
+				if s:
+					s.set(port)
+					self._detach.pop(s)
 			elif reason==2: # MODIFY
 				if self._ports_init.is_set():
 					assert hit
@@ -117,7 +116,7 @@ class PortMonitorChannel(ControllerChannel):
 		if not self._ports_init.is_set():
 			if self.version in (4, 5):
 				xid = hms_xid()
-				with self.lock:
+				with self._ports_lock:
 					self._port_monitor_multi[xid] = []
 				self.send(struct.pack("!BBHIHH4x", self.version, 
 					18, # MULTIPART_REQUEST (v1.3, v1.4)
@@ -141,13 +140,13 @@ class PortMonitorChannel(ControllerChannel):
 		
 		for port in old_ports:
 			if port.port_no in old_nums-new_nums:
-				with self.lock:
+				with self._ports_lock:
 					s = self._detach.get(port.port_no)
 					if s:
 						s.set(port)
 						self._detach.pop(s)
 			if port.name in old_names-new_names:
-				with self.lock:
+				with self._ports_lock:
 					s = self._detach.get(port.name)
 					if s:
 						s.set(port)
@@ -155,13 +154,13 @@ class PortMonitorChannel(ControllerChannel):
 		
 		for port in new_ports:
 			if port.port_no in new_nums-old_nums:
-				with self.lock:
+				with self._ports_lock:
 					s = self._attach.get(port.port_no)
 					if s:
 						s.set(port)
 						self._attach.pop(s)
 			if port.name in new_names-old_names:
-				with self.lock:
+				with self._ports_lock:
 					s = self._attach.get(port.name)
 					if s:
 						s.set(port)
@@ -178,7 +177,7 @@ class PortMonitorChannel(ControllerChannel):
 			if port.port_no == num_or_name or port.name == num_or_name:
 				return port
 		
-		with self.lock:
+		with self._ports_lock:
 			if num_or_name not in self._attach:
 				result = self._attach[num_or_name] = self.event()
 			else:
@@ -197,7 +196,7 @@ class PortMonitorChannel(ControllerChannel):
 		if not hit:
 			return num_or_name # already detached
 		
-		with self.lock:
+		with self._ports_lock:
 			if num_or_name not in self._detach:
 				result = self._detach[num_or_name] = self.event()
 			else:

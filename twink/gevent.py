@@ -6,7 +6,6 @@ import gevent.pool
 import gevent.monkey
 import gevent.subprocess
 
-
 class ParallelMixin(ParallelChannel):
 	spawn = gevent.spawn
 	subprocess = gevent.subprocess
@@ -109,6 +108,7 @@ class ChannelDatagramServer(gevent.server.DatagramServer):
 			ch.close()
 		super(ChannelDatagramServer, self).close()
 
+
 def serve_forever(*servers, **opts):
 	for server in servers:
 		server.start()
@@ -123,21 +123,25 @@ def serve_forever(*servers, **opts):
 if __name__=="__main__":
 	logging.basicConfig(level=logging.DEBUG)
 	pool = gevent.pool.Pool(50)
+	
+	def handle(message, channel):
+		pass
+	
 	# use spawn=pool or spawn=int kwarg to make sure Channel.close called.
 	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), spawn=pool)
 	tcpserv.channel_cls = type("TcpChannel", (
-		BranchingMixin, SyncChannel, MonitorChannel, JackinChannel,
+		SyncChannel, MonitorChannel, JackinChannel,
 		ControllerChannel,
 		AutoEchoChannel,
 		LoggingChannel,
-		HandleInSpawnChannel), {"accept_versions":[4,]})
+		ParallelMixin), {"accept_versions":[4,], "handle":staticmethod(handle)})
 	udpserv = ChannelDatagramServer(("0.0.0.0", 6653), spawn=pool)
 	udpserv.channel_cls = type("UdpChannel", (
-		BranchingMixin, SyncChannel, MonitorChannel, JackinChannel,
+		SyncChannel, MonitorChannel, JackinChannel,
 		ControllerChannel,
 		AutoEchoChannel,
 		LoggingChannel,
-		HandleInSpawnChannel), {"accept_versions":[4,]})
+		ParallelMixin), {"accept_versions":[4,], "handle":staticmethod(handle)})
 	
 	serve_forever(tcpserv, udpserv)
 

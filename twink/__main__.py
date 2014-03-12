@@ -9,8 +9,12 @@ import SocketServer
 
 if __name__ == "__main__":
 	logging.basicConfig(level=logging.DEBUG)
+	
+	def handle(message, channel):
+		pass
+	
 	serv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
-	serv.channel_cls = type("TcpChannel",(ControllerChannel, AutoEchoChannel, LoggingChannel),{"accept_versions":[4,]})
+	serv.channel_cls = type("TcpChannel",(ControllerChannel, AutoEchoChannel, LoggingChannel),{"accept_versions":[4,], "handle":staticmethod(handle)})
 	serv.serve_forever()
 
 # serv = ChannelUDPServer(("0.0.0.0", 6653), DatagramRequestHandler)

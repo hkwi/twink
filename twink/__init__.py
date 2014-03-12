@@ -9,7 +9,6 @@ import struct
 import types
 import weakref
 
-
 class Channel(object):
 	'''
 	Openflow abstract connection class
@@ -238,10 +237,20 @@ def parse_hello(message):
 					versions.add(idx*32 + s)
 	return versions
 
+class DummyLock(object):
+	def _noop(self, *args, **kwargs):
+		pass
+	
+	acquire = _noop
+	release = _noop
+	__enter__ = _noop
+	__exit__ = _noop
+
 class OpenflowChannel(Channel):
 	version = None
 	accept_versions = [4,] # just for default value
 	handle = None
+	lock_cls = DummyLock
 	
 	def attach(self, stream_socket, **kwargs):
 		self._socket = stream_socket
@@ -295,6 +304,7 @@ class OpenflowChannel(Channel):
 	def handle_proxy(self, handle):
 		# decorator allows stacking
 		return handle
+
 
 class AutoEchoChannel(OpenflowChannel):
 	def handle_proxy(self, handle):
@@ -362,16 +372,17 @@ class Chunk(WeakCallbackCaller):
 class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 	datapath = None
 	auxiliary = None
-	seq = None
+	
+	def __init__(self, *args, **kwargs):
+		super(ControllerChannel, self).__init__(*args, **kwargs)
+		self.seq_lock = self.lock_cls()
+		self.seq = []
 	
 	def send(self, message, **kwargs):
-		with self.lock:
+		with self.seq_lock:
 			return self.locked_send(message, **kwargs)
 	
 	def locked_send(self, message, **kwargs):
-		if self.seq is None:
-			self.seq = []
-		
 		message_handler = kwargs.get("callback")
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
@@ -386,7 +397,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
 					else:
 						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
-					
+				
 					self.seq.append(Barrier(bxid))
 					self.seq.append(Chunk(message_handler))
 					super(ControllerChannel, self).send(msg)
@@ -420,7 +431,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 				# bypass method call for async message
 				return super(ControllerChannel, self).handle_proxy(self.handle_async)(message, channel)
 			
-			with self.lock:
+			with self.seq_lock:
 				if self.seq:
 					if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
 						chunk_drop = False
@@ -451,27 +462,24 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 			
 			if self.callback:
 				return self.callback(message, self)
-			elif self.handle:
-				return super(ControllerChannel, self).handle_proxy(self.handle)(message, channel)
+			else:
+				return super(ControllerChannel, self).handle_proxy(handle)(message, channel)
 			
-			logging.warn("No callback found for handling message %s" % binascii.b2a_hex(message))
+			logging.getLogger(__name__).warn("No callback found for handling message %s" % binascii.b2a_hex(message))
 		return intercept
 
 
-class DummyLock(object):
-	def _noop(self, *args, **kwargs):
-		pass
-	
-	acquire = _noop
-	release = _noop
-	__enter__ = _noop
-	__exit__ = _noop
-
-
 class ParallelChannel(OpenflowChannel):
-	lock = DummyLock()
 	# mixin for parent channel
 	socket_dir = None
+	
+	def __init__(self, *args, **kwargs):
+		super(ParallelChannel, self).__init__(*args, **kwargs)
+		self.close_lock = self.lock_cls()
+	
+	def close(self):
+		with self.close_lock:
+			super(ParallelChannel, self).close()
 	
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
@@ -484,8 +492,9 @@ class ParallelChannel(OpenflowChannel):
 				except:
 					logging.getLogger(__name__).error("handle error", exc_info=True)
 					channel.close()
+			
 			self.spawn(proxy, message, channel)
-		return intercept
+		return super(ParallelChannel, self).handle_proxy(intercept)
 	
 	def socket_path(self, path):
 		if self.socket_dir:
@@ -524,11 +533,17 @@ class ParentChannel(ParallelChannel):
 	def close(self):
 		if self.jackin:
 			self.jackin_shutdown()
-			os.remove(self.helper_path("jackin"))
+			try:
+				os.remove(self.helper_path("jackin"))
+			except OSError:
+				pass
 		
 		if self.monitor:
 			self.monitor_shutdown()
-			os.remove(self.helper_path("monitor"))
+			try:
+				os.remove(self.helper_path("monitor"))
+			except OSError:
+				pass
 		
 		super(ParentChannel, self).close()
 	
@@ -574,7 +589,7 @@ class JackinChildChannel(ChildChannel):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype!=0:
 			self.parent.send(message, callback=self.cbfunc)
-#lambda message, channel: self.send(message, channel))
+	
 	def cbfunc(self, message, upstream_channel):
 		self.send(message)
 
@@ -590,6 +605,7 @@ class SyncChannel(ParallelChannel):
 	def __init__(self, *args, **kwargs):
 		super(SyncChannel, self).__init__(*args, **kwargs)
 		self.syncs = {}
+		self.syncs_lock = self.lock_cls()
 	
 	def recv(self):
 		message = super(SyncChannel, self).recv()
@@ -598,7 +614,7 @@ class SyncChannel(ParallelChannel):
 			if xid in self.syncs:
 				x = self.syncs[xid]
 				if (version==1 and oftype==17) or (version!=1 and oftype==19): # multipart
-					with self.lock:
+					with self.syncs_lock:
 						if x.data is None:
 							x.data = message
 						else:
@@ -613,11 +629,11 @@ class SyncChannel(ParallelChannel):
 	def send_sync(self, message, **kwargs):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		x = SyncTracker(xid, self.event())
-		with self.lock:
+		with self.syncs_lock:
 			self.syncs[x.xid] = x
 		self.send(message, **kwargs)
 		x.ev.wait()
-		with self.lock:
+		with self.syncs_lock:
 			self.syncs.pop(x.xid)
 		return x.data
 	
@@ -661,7 +677,7 @@ class SyncChannel(ParallelChannel):
 		for message in messages:
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			x = SyncTracker(xid, self.event())
-			with self.lock:
+			with self.syncs_lock:
 				self.syncs[x.xid] = x
 			self.send(message, **kwargs)
 			prepared.append(xid)
@@ -671,28 +687,16 @@ class SyncChannel(ParallelChannel):
 		for xid in prepared:
 			if xid in self.syncs:
 				results.append(self.syncs[xid].data)
-				with self.lock:
+				with self.syncs_lock:
 					self.syncs.pop(xid)
 			else:
 				results.append(None)
 		return results
 
 
-#
-# SocketServer.TCPServer, SocketServer.UnixStreamServer
-#
-class ChannelStreamServer(SocketServer.TCPServer):
-	# You can Mixin this class as:
-	# serv = type("Serv", (ThreadingTCPServer,ChannelStreamServer), {})(("localhost",6653). StreamHandler)
-	timeout = 0.5
-	allow_reuse_address = True
+class ChannelStreamMixin:
 	closed = False
 	channel_cls = None
-	channels = None
-	
-	def __init__(self, *args, **kwargs):
-		SocketServer.TCPServer.__init__(self, *args, **kwargs)
-		self.channels = set()
 	
 	def channel_handle(self, request, client_address):
 		ch = self.channel_cls(
@@ -714,37 +718,18 @@ class ChannelStreamServer(SocketServer.TCPServer):
 		try:
 			ch.loop()
 		except Exception,e:
-			logging.error(str(e), exc_info=True)
+			logging.getLogger(__name__).error(str(e), exc_info=True)
 		finally:
-			if not ch.closed:
-				ch.close()
-				self.channels.remove(ch)
-	
-	def server_close(self):
-		SocketServer.TCPServer.server_close(self)
-		self.closed = True
-		for ch in tuple(self.channels):
-			if ch.closed:
-				continue
 			ch.close()
+		
+		try:
 			self.channels.remove(ch)
-	
-	def shutdown(self):
-		self.server_close()
-		SocketServer.TCPServer.shutdown(self)
+		except:
+			pass
 
 
-#
-# SocketServer.UDPServer
-#
-class ChannelUDPServer(SocketServer.UDPServer):
-	allow_reuse_address = True
+class ChannelDatagramMixin:
 	channel_cls = None
-	channels = None
-	
-	def __init__(self, *args, **kwargs):
-		SocketServer.UDPServer.__init__(self, *arg, **kwargs)
-		self.channels = set()
 	
 	def channel_handle(self, request, client_address):
 		ch = None
@@ -757,7 +742,10 @@ class ChannelUDPServer(SocketServer.UDPServer):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if ch and oftype==0:
 				ch.close()
-				self.channels.remove(ch)
+				try:
+					self.channels.remove(ch)
+				except:
+					pass
 				ch = None
 		
 		if ch is None:
@@ -776,11 +764,79 @@ class ChannelUDPServer(SocketServer.UDPServer):
 			if f.tell() < len(data):
 				warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
 		except Exception,e:
-			logging.error(str(e), exc_info=True)
+			logging.getLogger(__name__).error(str(e), exc_info=True)
 		finally:
 			ch.messages = None
-			if ch.closed:
+		
+		if ch.closed:
+			try:
 				self.channels.remove(ch)
+			except:
+				pass
+
+
+#
+# SocketServer.TCPServer, SocketServer.UnixStreamServer
+#
+class ChannelStreamServer(SocketServer.TCPServer, ChannelStreamMixin):
+	allow_reuse_address = True
+	timeout = 0.5
+	
+	def __init__(self, *args, **kwargs):
+		self.channels = set()
+		SocketServer.TCPServer.__init__(self, *args, **kwargs)
+	
+	def server_close(self):
+		SocketServer.TCPServer.server_close(self)
+		self.closed = True
+		for ch in tuple(self.channels):
+			if ch.closed:
+				continue
+			ch.close()
+			try:
+				self.channels.remove(ch)
+			except:
+				pass
+	
+	def shutdown(self):
+		self.server_close()
+		SocketServer.TCPServer.shutdown(self)
+
+
+class ChannelUnixStreamServer(SocketServer.UnixStreamServer, ChannelStreamMixin):
+	allow_reuse_address = True
+	timeout = 0.5
+	
+	def __init__(self, *args, **kwargs):
+		self.channels = set()
+		SocketServer.UnixStreamServer.__init__(self, *args, **kwargs)
+	
+	def server_close(self):
+		SocketServer.UnixStreamServer.server_close(self)
+		self.closed = True
+		for ch in tuple(self.channels):
+			if ch.closed:
+				continue
+			ch.close()
+			try:
+				self.channels.remove(ch)
+			except:
+				pass
+	
+	def shutdown(self):
+		self.server_close()
+		SocketServer.UnixStreamServer.shutdown(self)
+
+
+#
+# SocketServer.UDPServer, SocketServer.UnixDatagramServer
+#
+class ChannelUDPServer(SocketServer.UDPServer, ChannelDatagramMixin):
+	allow_reuse_address = True
+	
+	def __init__(self, *args, **kwargs):
+		self.channels = set()
+		SocketServer.UDPServer.__init__(self, *args, **kwargs)
 	
 	def server_close(self):
 		SocketServer.UDPServer.server_close(self)
@@ -788,11 +844,37 @@ class ChannelUDPServer(SocketServer.UDPServer):
 			if ch.closed:
 				continue
 			ch.close()
-			self.channels.remove(ch)
+			try:
+				self.channels.remove(ch)
+			except:
+				pass
 	
 	def shutdown(self, *args, **kwargs):
 		self.server_close()
 		SocketServer.UDPServer.shutdown(self, *args, **kwargs)
+
+
+class ChannelUnixDatagramServer(SocketServer.UnixDatagramServer, ChannelDatagramMixin):
+	allow_reuse_address = True
+	
+	def __init__(self, *args, **kwargs):
+		self.channels = set()
+		SocketServer.UnixDatagramServer.__init__(self, *args, **kwargs)
+	
+	def server_close(self):
+		SocketServer.UnixDatagramServer.server_close(self)
+		for ch in tuple(self.channels):
+			if ch.closed:
+				continue
+			ch.close()
+			try:
+				self.channels.remove(ch)
+			except:
+				pass
+	
+	def shutdown(self, *args, **kwargs):
+		self.server_close()
+		SocketServer.UnixDatagramServer.shutdown(self, *args, **kwargs)
 
 
 # handlers

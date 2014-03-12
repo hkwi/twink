@@ -9,7 +9,6 @@ try:
 except:
 	from queue import queue
 
-
 class Threadlet(object):
 	started = False
 	def __init__(self, func, *args, **kwargs):
@@ -45,10 +44,10 @@ class Threadlet(object):
 class ParallelMixin(ParallelChannel):
 	subprocess = subprocess
 	event = threading.Event
+	lock_cls = threading.RLock
 	
 	def __init__(self, *args, **kwargs):
 		super(ParallelMixin, self).__init__(*args, **kwargs)
-		self.lock = threading.RLock()
 	
 	def spawn(self, func, *args, **kwargs):
 		th = Threadlet(func, *args, **kwargs)
@@ -56,7 +55,7 @@ class ParallelMixin(ParallelChannel):
 		return th
 	
 	def jackin_server(self, path):
-		class JackinServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer):
+		class JackinServer(ChannelUnixStreamServer):
 			channel_cls = type("JackinChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })
@@ -65,7 +64,7 @@ class ParallelMixin(ParallelChannel):
 		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 	
 	def monitor_server(self, path):
-		class MonitorServer(SocketServer.ThreadingUnixStreamServer, ChannelStreamServer):
+		class MonitorServer(ChannelUnixStreamServer):
 			channel_cls = type("MonitorChannel",(AutoEchoChannel, LoggingChannel, ChildChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })
@@ -74,7 +73,7 @@ class ParallelMixin(ParallelChannel):
 		return Threadlet(serv.serve_forever).start, serv.shutdown, serv.server_address
 	
 	def temp_server(self):
-		class TempServer(SocketServer.ThreadingMixIn, ChannelStreamServer):
+		class TempServer(ChannelStreamServer):
 			channel_cls = type("TempChannel",(AutoEchoChannel, LoggingChannel, JackinChildChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })
@@ -115,11 +114,12 @@ if __name__=="__main__":
 	tcpserv = TestTcpServer(("0.0.0.0", 6653), StreamRequestHandler)
 	tcpserv.channel_cls = type("TcpChannel", (
 		SyncChannel,
-		BranchingMixin,
 		JackinChannel,
 		MonitorChannel,
 		ControllerChannel,
-		AutoEchoChannel, LoggingChannel, HandleInThreadChannel),{
+		AutoEchoChannel,
+		LoggingChannel,
+		ParallelMixin),{
 			"accept_versions":[4,],
 			"handle":staticmethod(msg_handle) })
 	serve_forever(tcpserv)

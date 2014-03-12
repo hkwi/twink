@@ -124,10 +124,9 @@ if __name__=="__main__":
 		AutoPacketOut,
 		OvsChannel,
 		JackinChannel,
-		threading.BranchingMixin,
+		threading.ParallelMixin,
 		AutoEchoChannel,
-		LoggingChannel,
-		threading.HandleInThreadChannel),{
+		LoggingChannel),{
 			"accept_versions":[1,4,],
 			"handle": staticmethod(handle)
 		})
