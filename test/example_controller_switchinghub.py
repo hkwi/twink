@@ -10,7 +10,6 @@ import twink.ofp4.oxm as oxm
 
 class TestChannel(twink.ovs.OvsChannel,
 		twink.ext.PortMonitorChannel,
-		twink.ControllerChannel,
 		twink.threading.JackinChannel,
 		twink.threading.ParallelMixin,
 		twink.LoggingChannel):
@@ -26,8 +25,7 @@ class TestChannel(twink.ovs.OvsChannel,
 			print msg
 			in_port = [o for o in oxm.parse_list(msg.match.oxm_fields) if o.oxm_field==oxm.OXM_OF_IN_PORT][0].oxm_value
 			src_mac = ":".join(["%02x" % ord(a) for a in msg.data[6:12]])
-			channel.add_flow("table=0,priority=3,idle_timeout=300,  dl_src=%s,in_port=%d,  actions=goto_table:1" % (src_mac, in_port))
-			channel.add_flow("table=0,priority=2,idle_timeout=300,  dl_src=%s,  actions=controller" % src_mac)
+			channel.add_flow("table=0,priority=2,idle_timeout=300,  dl_src=%s,in_port=%d,  actions=goto_table:1" % (src_mac, in_port))
 			channel.add_flow("table=1,priority=2,idle_timeout=300,  dl_dst=%s,  actions=output:%d" % (src_mac, in_port))
 			channel.send(b.ofp_packet_out(None, msg.buffer_id, in_port, None, [b.ofp_action_output(None, None, ofp4.OFPP_TABLE, 0),], None))
 			
