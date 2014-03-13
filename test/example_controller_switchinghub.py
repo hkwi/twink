@@ -38,8 +38,7 @@ class TestChannel(twink.ovs.OvsChannel,
 			self.add_flow("table=0,priority=1,  actions=controller")
 			self.add_flow("table=1,priority=3,  dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,  actions=group:1")
 			self.add_flow("table=1,priority=1,  actions=group:1")
-			with self.lock:
-				self.init = True
+			self.init = True
 
 
 if __name__=="__main__":
