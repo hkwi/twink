@@ -469,13 +469,66 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 		return intercept
 
 
+class RateLimit(object):
+	def __init__(self, lock_cls, spawn, size):
+		self._spawn = spawn
+		self.size = size
+		self.lock_cls = lock_cls
+		
+		self.cold_lock = self.lock_cls()
+		self.cold = []
+		
+		self.loop_lock = self.lock_cls()
+	
+	def spawn(self, func, *args, **kwargs):
+		with self.cold_lock:
+			self.cold.append((func, args, kwargs))
+		
+		self._spawn(self.loop)
+	
+	def loop(self):
+		with self.loop_lock:
+			while len(self.cold) > 0:
+				hot_lock = self.lock_cls()
+				hot = []
+				children = {}
+				while len(hot) < self.size and len(self.cold) > 0:
+					task = None
+					with self.cold_lock:
+						task = self.cold.pop(0)
+				
+					if task:
+						(func, args, kwargs) = task
+						def proxy():
+							func(*args, **kwargs)
+							with hot_lock:
+								hot.remove(task)
+						hot.append(task)
+						children[id(task)] = self._spawn(proxy)
+				
+					for task_id,job in tuple(children.items()):
+						running = False
+						with hot_lock:
+							if task_id in [id(task) for task in hot]:
+								running = True
+					
+						if running:
+							job.join(0.5)
+						else:
+							chilren.pop(task)
+					
+						break
+
+
 class ParallelChannel(OpenflowChannel):
 	# mixin for parent channel
 	socket_dir = None
+	async_rate = 0
 	
 	def __init__(self, *args, **kwargs):
 		super(ParallelChannel, self).__init__(*args, **kwargs)
 		self.close_lock = self.lock_cls()
+		self.async_pool = RateLimit(self.lock_cls, self.spawn, self.async_rate)
 	
 	def close(self):
 		with self.close_lock:
@@ -493,7 +546,16 @@ class ParallelChannel(OpenflowChannel):
 					logging.getLogger(__name__).error("handle error", exc_info=True)
 					channel.close()
 			
-			self.spawn(proxy, message, channel)
+			rated_call = False
+			if self.async_rate:
+				(version, oftype, length, xid) = parse_ofp_header(message)
+				if oftype in (10, 11, 12):
+					rated_call = True
+			
+			if rated_call:
+				self.async_pool.spawn(proxy, message, channel)
+			else:
+				self.spawn(proxy, message, channel)
 		return super(ParallelChannel, self).handle_proxy(intercept)
 	
 	def socket_path(self, path):
