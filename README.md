@@ -2,31 +2,30 @@ twink
 =====
 `twink` is a python openflow library.
 
-`twink` use plain openflow binary message instead of forcing 
+`twink` uses plain openflow binary message instead of forcing 
 you mastering a bundled complicated openflow protocol classes. 
 You may use whatever openflow message parsing, building libraries. 
 `twink` supports all openflow versions (1.0--1.4).
 
 `twink.threading` provides a `threading`-based server implementation. 
-You can start running with standard libraries.
+You can get started with python standard libraries.
 
 `twink.gevent` has a gevent based openflow server, so for example, 
 you can create an openflow controller server with websocket support.
 
 `twink.ovs` offers you ovs-ofctl based openflow message creation.
 
-`twink.ext` provides utility functionality.
+`twink.ext` provides utility functionalities.
 
 For convenience, twink has `ofp4` openflow 1.3 message parser/builder
 as `twink.ofp4`, and `twink.ofp5` for openflow 1.4.
 
 parallel and concurrency
 ------------------------
-With `twink.gevent`, openflow message handling will be parallel.
-During handling a specific message, you can suspend it and wait for 
-next openflow message incoming using `gvent.event`.
-`twink.standard` provides per connection concurrency.
-You must use mutex that lives across connections.
+`twink.gevent` or `twink.threading` enables openflow message parallel handling.
+While processing some openflow message with ovs-ofctl and suspend the process 
+waiting for reply, another openflow message can be handled in another handler.
+If you use `threading` based controller, be sure using mutex.
 
 server or client
 ----------------
