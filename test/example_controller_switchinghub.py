@@ -10,7 +10,7 @@ import twink.ofp4.oxm as oxm
 
 class TestChannel(twink.ovs.OvsChannel,
 		twink.ext.PortMonitorChannel,
-		twink.threading.JackinChannel,
+		twink.JackinChannel,
 		twink.threading.ParallelMixin,
 		twink.LoggingChannel):
 	accept_versions=[4,]
