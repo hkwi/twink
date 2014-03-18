@@ -34,7 +34,7 @@ class TestChannel(twink.ovs.OvsChannel,
 	def handle(self, message, channel):
 		msg = ofp4parse.parse(message)
 		if msg.header.type == ofp4.OFPT_HELLO:
-			self.ofctl("add-group", "group_id=1,type=all"+",".join(["bucket=output:%d" % port.port_no for port in self.ports]))
+			self.ofctl("add-group", "group_id=1,type=all,"+",".join(["bucket=output:%d" % port.port_no for port in self.ports]))
 			self.add_flow("table=0,priority=1,  actions=controller")
 			self.add_flow("table=1,priority=3,  dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,  actions=group:1")
 			self.add_flow("table=1,priority=1,  actions=group:1")
