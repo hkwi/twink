@@ -27,6 +27,8 @@ class Channel(object):
 	
 	@property
 	def closed(self):
+		# This is not self._socket.closed because in some use cases, 
+		# self._socket is not available, for example with gevent.server.DatagramServer
 		return self.remote_address is None
 	
 	def close(self):
