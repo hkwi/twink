@@ -595,14 +595,14 @@ class ParentChannel(ParallelChannel):
 	monitor_shutdown = None
 	
 	def close(self):
-		if self.jackin:
+		if self.jackin_shutdown:
 			self.jackin_shutdown()
 			try:
 				os.remove(self.helper_path("jackin"))
 			except OSError:
 				pass
 		
-		if self.monitor:
+		if self.monitor_shutdown:
 			self.monitor_shutdown()
 			try:
 				os.remove(self.helper_path("monitor"))
