@@ -261,6 +261,8 @@ class OpenflowChannel(Channel):
 		
 		opts = {"interactive":True,}
 		opts.update(kwargs)
+		if hasattr(stream_socket, "settimeout") and stream_socket.gettimeout() == None:
+			stream_socket.settimeout(0.5)
 		self.messages = read_message(stream_socket.recv, **opts)
 		
 		if kwargs.get("autostart", True):
