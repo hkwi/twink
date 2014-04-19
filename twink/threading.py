@@ -9,6 +9,8 @@ try:
 except:
 	from queue import queue
 
+__all__=("ParallelMixin","serve_forever")
+
 class Threadlet(object):
 	started = False
 	def __init__(self, func, *args, **kwargs):
