@@ -27,7 +27,7 @@ class TestChannel(twink.ovs.OvsChannel,
 			src_mac = ":".join(["%02x" % ord(a) for a in msg.data[6:12]])
 			channel.add_flow("table=0,priority=2,idle_timeout=300,  dl_src=%s,in_port=%d,  actions=goto_table:1" % (src_mac, in_port))
 			channel.add_flow("table=1,priority=2,idle_timeout=300,  dl_dst=%s,  actions=output:%d" % (src_mac, in_port))
-			channel.send(b.ofp_packet_out(None, msg.buffer_id, in_port, None, [b.ofp_action_output(None, None, ofp4.OFPP_TABLE, 0),], None))
+			channel.send(b.ofp_packet_out(None, msg.buffer_id, in_port, None, [], None))
 			
 			print self.ofctl("dump-flows")
 	
@@ -35,7 +35,7 @@ class TestChannel(twink.ovs.OvsChannel,
 		msg = ofp4parse.parse(message)
 		if msg.header.type == ofp4.OFPT_HELLO:
 			self.ofctl("add-group", "group_id=1,type=all,"+",".join(["bucket=output:%d" % port.port_no for port in self.ports]))
-			self.add_flow("table=0,priority=1,  actions=controller")
+			self.add_flow("table=0,priority=1,  actions=controller,goto_table:1")
 			self.add_flow("table=1,priority=3,  dl_dst=01:00:00:00:00:00/01:00:00:00:00:00,  actions=group:1")
 			self.add_flow("table=1,priority=1,  actions=group:1")
 			self.init = True
