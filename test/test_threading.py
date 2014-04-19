@@ -9,7 +9,12 @@ import threading
 signal_stop = lambda: True
 signal.signal(signal.SIGINT, lambda num,fr:signal_stop())
 
+client_run_flag = True
+def client_run():
+	return client_run_flag
+
 def server_handle(message, channel):
+	global client_run_flag
 	assert message
 	version, oftype, l, xid = twink.parse_ofp_header(message)
 	if oftype == 0:
@@ -22,10 +27,6 @@ def client_handle(message, channel):
 	pass
 #	print len(message), channel
 
-client_run_flag = True
-def client_run():
-	return client_run_flag
-
 def test_io():
 	logging.basicConfig(level=logging.DEBUG)
 	class TestTcpServer(twink.ChannelStreamServer, SocketServer.ThreadingTCPServer):
@@ -33,12 +34,13 @@ def test_io():
 		pass
 	serv = TestTcpServer(("127.0.0.1", 0), twink.StreamRequestHandler)
 	serv.channel_cls = type("TcpChannel", (
-		twink.threading.BranchingMixin,
+		twink.threading.ParallelMixin,
 		twink.SyncChannel,
 		twink.ControllerChannel,
 		twink.AutoEchoChannel,
 		twink.LoggingChannel,
-		twink.threading.HandleInThreadChannel),{
+		twink.ChannelStreamMixin
+		),{
 			"accept_versions":[4,],
 			"handle":staticmethod(server_handle)})
 	serv_thread = threading.Thread(target=serv.serve_forever)
@@ -49,10 +51,11 @@ def test_io():
 		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		s.connect(serv.server_address)
 		ch = type("Client", (
-		twink.threading.BranchingMixin,
+		twink.threading.ParallelMixin,
 		twink.ControllerChannel,
 		twink.AutoEchoChannel,
-		twink.LoggingChannel),{
+		twink.LoggingChannel,
+		),{
 			"accept_versions":[4,],
 			"handle":staticmethod(client_handle)})()
 		ch.attach(s, health_check=client_run)

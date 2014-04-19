@@ -31,12 +31,12 @@ def test_io():
 		pass
 	serv = twink.gevent.ChannelStreamServer(("127.0.0.1", 0), spawn=10)
 	serv.channel_cls = type("TcpChannel", (
-		twink.gevent.BranchingMixin,
+		twink.gevent.ParallelMixin,
 		twink.SyncChannel,
 		twink.ControllerChannel,
 		twink.AutoEchoChannel,
-		twink.LoggingChannel,
-		twink.gevent.HandleInSpawnChannel),{
+		twink.LoggingChannel
+		),{
 			"accept_versions":[4,],
 			"handle":staticmethod(server_handle)})
 	serv.start()
@@ -45,10 +45,10 @@ def test_io():
 		s = gevent.socket.socket(gevent.socket.AF_INET, gevent.socket.SOCK_STREAM)
 		s.connect(serv.address)
 		ch = type("Client", (
-		twink.gevent.BranchingMixin,
+		twink.gevent.ParallelMixin,
 		twink.AutoEchoChannel,
-		twink.LoggingChannel,
-		twink.gevent.HandleInSpawnChannel),{
+		twink.LoggingChannel
+		),{
 			"accept_versions":[4,],
 			"handle":staticmethod(client_handle)})()
 		ch.attach(s)
