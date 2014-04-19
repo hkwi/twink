@@ -1,6 +1,41 @@
 from __future__ import absolute_import
+import threading as nthreading
 from . import *
-import subprocess
+from . import threading
+import struct
+
+__all__=("rule2ofp", "OvsChannel","AutoPacketOut")
+
+def rule2ofp(flowrule, version=4):
+	x,y = socket.socketpair()
+	ovs = type("C", (OvsChannel, threading.ParallelMixin), dict(accept_versions=(version,)))()
+	ovs.attach(x)
+	bare = type("S", (OpenflowChannel,), dict(accept_versions=(version,)))()
+	bare.attach(y)
+	
+	assert struct.unpack_from("!BBHI", ovs.recv())[1] == 0
+	assert struct.unpack_from("!BBHI", bare.recv())[1] == 0
+	
+	flow = None
+	def tf():
+		ovs.add_flow(flowrule)
+	ths = [nthreading.Thread(target=f) for f in (tf, ovs.loop)]
+	try:
+		[th.start() for th in ths]
+		flow = bare.recv()
+		barrier = struct.unpack_from("!BBHI", bare.recv())
+		if barrier[0] == 1:
+			assert barrier[1] == 18
+			bare.send(struct.pack("!BBHI", barrier[0], 19, 8, barrier[3]))
+		else:
+			assert barrier[1] == 20
+			bare.send(struct.pack("!BBHI", barrier[0], 21, 8, barrier[3]))
+	finally:
+		ovs.close()
+		bare.close()
+		[th.join() for th in ths]
+	
+	return flow
 
 class OvsChannel(ControllerChannel, ParallelChannel):
 	def add_flow(self, flow):
@@ -24,7 +59,8 @@ class OvsChannel(ControllerChannel, ParallelChannel):
 			cmd.append("tcp:%s:%d" % addr)
 			cmd.extend(args)
 			
-			p = self.subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+			subprocess = self.subprocess
+			p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
 				logging.getLogger(__name__).error(repr(cmd)+pstderr, exc_info=True)
@@ -113,7 +149,6 @@ class AutoPacketOut(ControllerChannel):
 
 
 if __name__=="__main__":
-	from . import threading
 	logging.basicConfig(level=logging.DEBUG)
 	
 	def handle(message, channel):
