@@ -315,7 +315,7 @@ class OpenflowServerChannel(OpenflowChannel):
 					break
 				
 				self.handle_proxy(self.handle)(message, self)
-		finally:
+		except ChannelClose:
 			self.close()
 	
 	def handle_proxy(self, handle):
