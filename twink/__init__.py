@@ -741,7 +741,7 @@ class ParentChannel(ParallelChannel):
 	def monitor_server(self):
 		path = self.helper_path("monitor")
 		serv = type("MonitorServer", (StreamServer,), dict(
-			channel_cls = type("MonitorCChannel",(MonitorChildChannel, AutoEchoChannel, LoggingChannel),{
+			channel_cls = type("MonitorCChannel",(ChildChannel, AutoEchoChannel, LoggingChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })))(path)
 		return serv.start, serv.stop, path
