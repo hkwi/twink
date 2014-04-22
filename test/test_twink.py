@@ -202,11 +202,11 @@ class BarrieredReply(object):
 			self.msgs.append(message)
 
 
-class ControllerChannelTestCase(unittest.TestCase):
+class ControllerChannelTestCase2(unittest.TestCase):
 	def test_pair1(self):
 		a,b = twink.socket.socketpair()
 		
-		x = type("ControllerChannelTestCaseX", (twink.OpenflowServerChannel,), {})(socket=a)
+		x = type("ControllerChannelTestCaseX", (twink.OpenflowServerChannel,twink.LoggingChannel), {})(socket=a)
 		x.handle = BarrieredReply()
 		y = twink.ControllerChannel(socket=b)
 		y.handle = lambda msg, ch: None
@@ -326,7 +326,7 @@ class SyncChannelTestCase(unittest.TestCase):
 
 
 if __name__=="__main__":
-	import logging
+#	import logging
 #	logging.basicConfig(level=logging.DEBUG)
 #	twink.use_gevent()
 	unittest.main()
