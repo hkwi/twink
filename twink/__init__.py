@@ -604,12 +604,13 @@ class StreamServer(object):
 	
 	def start(self):
 		self.accepting = True
+		sock = self.sock
+		sock.settimeout(0.5)
+		sock.listen(10)
 		spawn(self.run)
 	
 	def run(self):
 		sock = self.sock
-		sock.settimeout(0.5)
-		sock.listen(10)
 		while self.accepting:
 			try:
 				s = sock.accept()
