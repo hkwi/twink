@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 from . import *
 import logging
-import SocketServer
 
 # serv = SocketServer.ThreadingTCPServer(("0.0.0.0", 6653),
 # 	type("Handler", (SocketServer.StreamRequestHandler, ControllerChannel,LoggingChannel,StandardChannel),{"accept_versions":[4,]}),
@@ -13,9 +12,9 @@ if __name__ == "__main__":
 	def handle(message, channel):
 		pass
 	
-	serv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
+	serv = StreamServer(("0.0.0.0", 6653))
 	serv.channel_cls = type("TcpChannel",(ControllerChannel, AutoEchoChannel, LoggingChannel),{"accept_versions":[4,], "handle":staticmethod(handle)})
-	serv.serve_forever()
+	serve_forever(serv)
 
 # serv = ChannelUDPServer(("0.0.0.0", 6653), DatagramRequestHandler)
 # serv.channel_cls = type("UdpChannel",(ControllerChannel, LoggingChannel),{"accept_versions":[4,]})

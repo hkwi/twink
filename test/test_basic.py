@@ -1,5 +1,4 @@
 import twink
-import twink.threading
 import threading
 import socket
 import logging
@@ -19,17 +18,15 @@ class BasicTestCase(unittest.TestCase):
 		global signal_stop
 		
 		# blocking server
-		serv = twink.ChannelStreamServer(("localhost",0), twink.StreamRequestHandler)
+		serv = twink.StreamServer(("localhost",0))
 		serv.channel_cls = type("TcpChannel",(twink.ControllerChannel, twink.LoggingChannel),{
 				"accept_versions":[4,],
 				"handle":staticmethod(dummy_handle)})
-		serv_thread = threading.Thread(target=serv.serve_forever)
-		serv_thread.start()
+		serv_thread = twink.spawn(serv.start)
 		
-		signal_stop = serv.shutdown
+		signal_stop = serv.stop
 		try:
-			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			s.connect(serv.server_address)
+			s = socket.create_connection(serv.server_address[:2])
 			ch = type("Client", (twink.OpenflowChannel, twink.LoggingChannel), {"accept_versions":[4,]})()
 			ch.attach(s)
 			msg = ch.recv()
@@ -42,14 +39,14 @@ class BasicTestCase(unittest.TestCase):
 			ch.close()
 		
 		threading.Event().wait(0.1) # wait for serv.loop reads the buffer
-		serv.shutdown()
+		serv.stop()
 		serv_thread.join()
 
 	def wtest_echo(self):
 		global signal_stop
 		
 		# blocking server
-		serv = twink.ChannelStreamServer(("localhost",0), twink.StreamRequestHandler)
+		serv = twink.StreamServer(("localhost",0))
 		serv.channel_cls = type("Server",(twink.ControllerChannel, twink.AutoEchoChannel, twink.LoggingChannel),{
 				"accept_versions":[4,],
 				"handle":staticmethod(dummy_handle)})
@@ -58,8 +55,7 @@ class BasicTestCase(unittest.TestCase):
 		
 		signal_stop = serv.shutdown
 		try:
-			s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			s.connect(serv.server_address)
+			s = create_connection(serv.server_address[:2])
 			ch = type("Client", (twink.OpenflowChannel, twink.LoggingChannel), {"accept_versions":[4,]})()
 			ch.attach(s)
 			msg = ch.recv()

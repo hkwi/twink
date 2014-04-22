@@ -1,13 +1,67 @@
+from __future__ import absolute_import
 import binascii
-import datetime
 import logging
 import os
-import os.path
-import socket
-import SocketServer
 import struct
 import types
 import weakref
+import datetime
+from collections import namedtuple
+
+def sched(name):
+	if __package__:
+		import importlib
+		sched = importlib.import_module(__package__+".sched_"+name)
+	else:
+		sched = __import__("sched_"+name, globals(), locals(), ["*"])
+	
+	mods = [(k, getattr(sched,k)) for k in "subprocess socket Queue Lock Event spawn serve_forever".split()]
+	globals().update(mods)
+	return mods
+
+def use_gevent():
+	return sched("gevent")
+
+sched("basic")
+
+
+def default_wrapper(func):
+	def wrap(*args, **kwargs):
+		try:
+			return func(*args, **kwargs)
+		except socket.timeout:
+			return None
+		except socket.error as e:
+			if e.errno in (os.errno.EAGAIN, os.errno.ECONNRESET, os.errno.EBADF):
+				return b""
+			elif e.errno in (os.errno.EINTR,):
+				return None
+			raise
+		except KeyboardInterrupt:
+			return b""
+	return wrap
+
+
+class ReadWrapper(object):
+	def __init__(self, channel, read_wrap):
+		self.channel = channel
+		self.read_wrap = read_wrap
+	
+	def __enter__(self):
+		self.installed_wrapper = self.channel.read_wrap
+		self.channel.read_wrap = self
+		return self.channel
+	
+	def __exit__(self, *args, **kwargs):
+		self.channel.read_wrap = self.installed_wrapper
+	
+	def __call__(self, func):
+		def wrap(*args, **kwargs):
+			if self.channel.closed:
+				return b""
+			return self.read_wrap(func)(*args, **kwargs)
+		return wrap
+
 
 class Channel(object):
 	'''
@@ -18,12 +72,27 @@ class Channel(object):
 	You can subclass this to have instance members, of which lifecycle is 
 	the same with channel.
 	'''
-	messages = None
 	def __init__(self, *args, **kwargs):
-		self._socket = kwargs.get("socket") # dedicated socket
-		self._sendto = kwargs.get("sendto") # only if channel prefers sendto()
-		self.remote_address = kwargs.get("remote_address")
-		self.local_address = kwargs.get("local_address")
+		self._socket = kwargs.pop("socket", None) # dedicated socket
+		self._sendto = kwargs.pop("sendto", None) # only if channel prefers sendto()
+		self.reader = kwargs.pop("reader", None)
+		self.read_wrap = kwargs.pop("read_wrap", default_wrapper)
+		self.remote_address = kwargs.pop("remote_address", None)
+		self.local_address = kwargs.pop("local_address", None)
+		if self._socket:
+			if self.remote_address is None:
+				self.remote_address = self._socket.getpeername()
+			if self.local_address is None:
+				self.local_address = self._socket.getsockname()
+			if hasattr(self._socket, "settimeout") and self._socket.gettimeout() == None:
+				self._socket.settimeout(0.5)
+	
+	def attach(self, stream, **kwargs):
+		self._socket = stream
+		if hasattr(self._socket, "settimeout") and self._socket.gettimeout() == None:
+			self._socket.settimeout(0.5)
+		self.remote_address = stream.getpeername()
+		self.local_address = stream.getsockname()
 	
 	@property
 	def closed(self):
@@ -34,9 +103,8 @@ class Channel(object):
 	def close(self):
 		if self._socket:
 			self._socket.close()
-			self._socket = None
 		
-		if self.remote_address:
+		if self.remote_address is not None:
 			self.remote_address = None
 	
 	def send(self, message, **kwargs):
@@ -47,16 +115,65 @@ class Channel(object):
 		else:
 			raise ValueError("socket or sendto is required")
 	
-	def recv(self):
-		return self.messages.next()
-	
-	def start(self):
-		pass
-	
-	def loop(self):
-		pass
+	def _recv(self, num):
+		if self.reader:
+			reader = self.reader
+		else:
+			reader = self._socket.recv
+		return ReadWrapper(self, self.read_wrap)(reader)(num)
 
-class LoggingChannel(Channel):
+
+class Error(Exception):
+	pass
+
+
+class ChannelClose(Error):
+	pass
+
+
+class OpenflowBaseChannel(Channel):
+	version = None # The negotiated version
+	accept_versions = [4,] # defaults to openflow 1.3
+	
+	def __init__(self, *args, **kwargs):
+		super(OpenflowBaseChannel, self).__init__(*args, **kwargs)
+		self.buffer = b""
+	
+	def __iter__(self):
+		while True:
+			ret = self.recv()
+			if ret:
+				yield ret
+			else:
+				break
+	
+	def recv(self):
+		required_len = 8
+		while len(self.buffer) < required_len:
+			tmp = super(OpenflowBaseChannel, self)._recv(8192)
+			if tmp is None:
+				continue
+			elif len(tmp)==0:
+				return tmp
+			self.buffer += tmp
+		
+		p = struct.unpack_from("!BBHI", self.buffer)
+		required_len = p[2]
+		
+		while len(self.buffer) < required_len:
+			tmp = super(OpenflowBaseChannel, self)._recv(8192)
+			if tmp is None:
+				continue
+			elif len(tmp)==0:
+				return tmp
+			self.buffer += tmp
+		
+		ret = self.buffer[0:required_len]
+		self.buffer = self.buffer[required_len:]
+		return ret
+
+
+class LoggingChannel(OpenflowBaseChannel):
 	channel_log_name = "channel"
 	send_log_name = "send"
 	recv_log_name = "recv"
@@ -71,7 +188,8 @@ class LoggingChannel(Channel):
 	
 	def recv(self):
 		message = super(LoggingChannel, self).recv()
-		logging.getLogger(self.recv_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
+		if message: # ignore b"" and None
+			logging.getLogger(self.recv_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
 		return message
 	
 	def close(self):
@@ -80,211 +198,18 @@ class LoggingChannel(Channel):
 			logging.getLogger(self.channel_log_name).info("%s close" % self)
 
 
-class Error(Exception):
-	pass
-
-class ChannelClose(Error):
-	pass
-
-class OpenflowError(Error): # Openflow protocol error for inner method calls
-	def __init__(self, message):
-		vals = list(struct.unpack_from("!BBHIHH", message))
-		vals.append(binascii.b2a_hex(message[struct.calcsize("!BBHIHH"):]))
-		o = zip("version oftype length xid etype ecode payload".split(), vals)
-		super(OpenflowError, self).__init__("OFPT_ERROR %s" % repr(o))
-		self.message = message
-
-def parse_ofp_header(message):
-	'''
-	@return (version, oftype, message_len, xid)
-	'''
-	return struct.unpack_from("!BBHI", message)
-
-
-def read_message(sized_read, **kwargs):
-	'''
-	generator for openflow message from bytestream reader.
-	sized_read : function of `bytestr = func(size)`
+class OpenflowChannel(OpenflowBaseChannel):
+	_start = None
 	
-	When resource is temporary unavailable, then empty string
-	"" will be returned.
-	This happens with nonblocking socket for example.
-	'''
-	health_check = kwargs.get("health_check", lambda: True)
-	assert callable(health_check), "health_check must be callable"
-	
-	OFP_HEADER_LEN = 8
-	while health_check():
-		message = bytearray()
-		while health_check() and len(message) < OFP_HEADER_LEN:
-			ext = ""
-			try:
-				ext = sized_read(OFP_HEADER_LEN-len(message))
-			except socket.timeout:
-				continue
-			except socket.error, e:
-				if e.errno == os.errno.EAGAIN:
-					yield ""
-					continue
-				elif e.errno in (os.errno.ECONNRESET, os.errno.EBADF):
-					break
-				else:
-					raise
-			except KeyboardInterrupt:
-				if kwargs.get("interactive", False):
-					yield ""
-					continue
-				else:
-					raise
-			
-			if len(ext) == 0:
-				break
-			message += ext
-		if len(message) == 0: # normal shutdown
-			break
-		assert len(message) == OFP_HEADER_LEN, "Read error in openflow message header."
-		
-		(version,oftype,message_len,x) = parse_ofp_header(bytes(message))
-		while health_check() and len(message) < message_len:
-			ext = ""
-			try:
-				ext = sized_read(message_len-len(message))
-			except socket.timeout:
-				continue
-			except socket.error, e:
-				if e.errno == os.errno.EAGAIN:
-					yield ""
-					continue
-				elif e.errno == os.errno.ECONNRESET:
-					break
-				else:
-					raise
-			except KeyboardInterrupt:
-				if kwargs.get("interactive", False):
-					yield ""
-					continue
-				else:
-					raise
-			
-			if len(ext) == 0:
-				break
-			message += ext
-		if len(message) == 0: # normal shutdown
-			break
-		assert len(message) == message_len, "Read error in openflow message body."
-		
-		yield bytes(message) # freeze the message for ease in dump
-
-def ofp_header_only(oftype, version=1, xid=None):
-	if xid is None:
-		xid = hms_xid()
-	return struct.pack("!BBHI", version, oftype, 8, xid)
-
-def hms_xid():
-	'''Xid looks readable datetime like format when logged as int.'''
-	now = datetime.datetime.now()
-	candidate = int(("%02d"*3+"%04d") % (now.hour, now.minute, now.second, now.microsecond/100))
-	if hasattr(hms_xid, "dedup"):
-		if hms_xid.dedup >= candidate:
-			candidate = hms_xid.dedup+1
-	setattr(hms_xid, "dedup", candidate)
-	return candidate
-
-def ofp_version_normalize(versions):
-	if isinstance(versions, list) or isinstance(versions, tuple) or isinstance(versions, set):
-		vset = set()
-		for version in versions:
-			if isinstance(version, float):
-				version = [1.0, 1.1, 1.2, 1.3, 1.4].index(version) + 1
-			assert isinstance(version, int), "unknown version %s" % version
-			vset.add(version)
-		return vset
-	elif versions is None:
-		return set()
-	assert False, "unknown versions %s" % versions
-
-def hello(versions, **kwargs):
-	xid = kwargs.get("xid", hms_xid())
-	if versions:
-		vset = ofp_version_normalize(versions)
-	else:
-		vset = set((1,))
-	version = max(vset)
-	
-	if version < 4:
-		return struct.pack("!BBHI", version, 0, 8, xid)
-	else:
-		units = [0,]*(1 + version/32)
-		for v in vset:
-			units[v/32] |= 1<<(v%32)
-		
-		versionbitmap_length = 4 + len(units)*4
-		fmt = "!BBHIHH%dI%dx" % (len(units), 8*((len(units)-1)%2))
-		return struct.pack(fmt, version, 0, struct.calcsize(fmt), xid, # HELLO
-			1, versionbitmap_length, *units) # VERSIONBITMAP
-
-def parse_hello(message):
-	(version, oftype, length, xid) = parse_ofp_header(message)
-	assert oftype==0 # HELLO
-	versions = set()
-	if length == 8:
-		versions.add(version)
-	else:
-		(subtype, sublength) = struct.unpack_from("!HH", message, offset=8)
-		assert subtype == 1 # VERSIONBITMAP
-		units = struct.unpack_from("!%dI" % (sublength/4 - 1), message, offset=12)
-		for idx,unit in zip(range(len(units)),units):
-			for s in range(32):
-				if unit&(1<<s):
-					versions.add(idx*32 + s)
-	return versions
-
-class DummyLock(object):
-	def _noop(self, *args, **kwargs):
-		pass
-	
-	acquire = _noop
-	release = _noop
-	__enter__ = _noop
-	__exit__ = _noop
-
-class OpenflowChannel(Channel):
-	version = None
-	accept_versions = [4,] # just for default value
-	handle = None
-	lock_cls = DummyLock
-	
-	def attach(self, stream_socket, **kwargs):
-		self._socket = stream_socket
-		self.remote_address = stream_socket.getpeername()
-		self.local_address = stream_socket.getsockname()
-		
-		opts = {"interactive":True,}
-		opts.update(kwargs)
-		if hasattr(stream_socket, "settimeout") and stream_socket.gettimeout() == None:
-			stream_socket.settimeout(0.5)
-		self.messages = read_message(stream_socket.recv, **opts)
-		
+	def attach(self, stream, **kwargs):
+		super(OpenflowBaseChannel, self).attach(stream, **kwargs)
 		if kwargs.get("autostart", True):
 			self.start()
 	
 	def start(self):
-		self.send(hello(self.accept_versions))
-	
-	def loop(self):
-		while not self.closed:
-			try:
-				message = self.recv()
-			except StopIteration:
-				message = None
-			
-			if not message:
-				break # exit the loop for next loop()
-			
-			try:
-				self.handle_proxy(self.handle)(message, self)
-			except ChannelClose:
-				self.close()
+		if self._start is None:
+			self.send(hello(self.accept_versions))
+			self._start = True
 	
 	def recv(self):
 		message = super(OpenflowChannel, self).recv()
@@ -304,13 +229,103 @@ class OpenflowChannel(Channel):
 						0, 0) + ascii_txt)
 					raise ChannelClose(ascii_txt)
 		return message
+
+
+def parse_ofp_header(message):
+	'''
+	@return (version, oftype, message_len, xid)
+	'''
+	return struct.unpack_from("!BBHI", message)
+
+
+def ofp_header_only(oftype, version=1, xid=None):
+	if xid is None:
+		xid = hms_xid()
+	return struct.pack("!BBHI", version, oftype, 8, xid)
+
+
+def hms_xid():
+	'''Xid looks readable datetime like format when logged as int.'''
+	now = datetime.datetime.now()
+	candidate = int(("%02d"*3+"%04d") % (now.hour, now.minute, now.second, now.microsecond/100))
+	if hasattr(hms_xid, "dedup"):
+		if hms_xid.dedup >= candidate:
+			candidate = hms_xid.dedup+1
+	setattr(hms_xid, "dedup", candidate)
+	return candidate
+
+
+def ofp_version_normalize(versions):
+	if isinstance(versions, list) or isinstance(versions, tuple) or isinstance(versions, set):
+		vset = set()
+		for version in versions:
+			if isinstance(version, float):
+				version = [1.0, 1.1, 1.2, 1.3, 1.4].index(version) + 1
+			assert isinstance(version, int), "unknown version %s" % version
+			vset.add(version)
+		return vset
+	elif versions is None:
+		return set()
+	assert False, "unknown versions %s" % versions
+
+
+def hello(versions, **kwargs):
+	xid = kwargs.get("xid", hms_xid())
+	if versions:
+		vset = ofp_version_normalize(versions)
+	else:
+		vset = set((1,))
+	version = max(vset)
+	
+	if version < 4:
+		return struct.pack("!BBHI", version, 0, 8, xid)
+	else:
+		units = [0,]*(1 + version//32)
+		for v in vset:
+			units[v//32] |= 1<<(v%32)
+		
+		versionbitmap_length = 4 + len(units)*4
+		fmt = "!BBHIHH%dI%dx" % (len(units), 8*((len(units)-1)%2))
+		return struct.pack(fmt, version, 0, struct.calcsize(fmt), xid, # HELLO
+			1, versionbitmap_length, *units) # VERSIONBITMAP
+
+
+def parse_hello(message):
+	(version, oftype, length, xid) = parse_ofp_header(message)
+	assert oftype==0 # HELLO
+	versions = set()
+	if length == 8:
+		versions.add(version)
+	else:
+		(subtype, sublength) = struct.unpack_from("!HH", message, offset=8)
+		assert subtype == 1 # VERSIONBITMAP
+		units = struct.unpack_from("!%dI" % (sublength/4 - 1), message, offset=12)
+		for idx,unit in zip(range(len(units)),units):
+			for s in range(32):
+				if unit&(1<<s):
+					versions.add(idx*32 + s)
+	return versions
+
+
+class OpenflowServerChannel(OpenflowChannel):
+	def loop(self):
+		try:
+			for message in self:
+				if not message:
+					break
+				
+				self.handle_proxy(self.handle)(message, self)
+		finally:
+			self.close()
 	
 	def handle_proxy(self, handle):
-		# decorator allows stacking
 		return handle
+	
+	def handle(self, message, channel):
+		logging.getLogger(__name__).warn("check MRO")
+		pass
 
-
-class AutoEchoChannel(OpenflowChannel):
+class AutoEchoChannel(OpenflowServerChannel):
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
 			if message:
@@ -322,64 +337,35 @@ class AutoEchoChannel(OpenflowChannel):
 		return intercept
 
 
-class CallbackDeadError(Error):
-	pass
-
-
-class CallbackWeakRef(object):
-	'''
-	Python 3.4 will have WeakMethod, which we need.
-	'''
-	func = None
-	obj = None
-	def __init__(self, callback):
-		if callback:
-			if isinstance(callback, types.MethodType):
-				self.obj = weakref.ref(callback.im_self)
-				self.name = callback.im_func.func_name
-			else:
-				self.func = weakref.ref(callback)
-	
-	def __call__(self):
-		if self.func:
-			return self.func()
-		elif self.obj is not None:
-			obj = self.obj()
-			if obj is not None:
-				return getattr(obj, self.name)
-
-
 class WeakCallbackCaller(object):
-	cbref = lambda self:None
-	
 	@property
 	def callback(self):
-		return self.cbref()
-	
-	@callback.setter
-	def callback(self, message_handler):
-		if message_handler and self.cbref() is None:
-			self.cbref = CallbackWeakRef(message_handler)
+		if self.cbref:
+			return self.cbref()
 
 
 class Barrier(WeakCallbackCaller):
 	def __init__(self, xid, message_handler=None):
-		self.callback = message_handler
+		if message_handler:
+			self.cbref = weakref.ref(message_handler)
+		else:
+			self.cbref = None
 		self.xid = xid
 
 
 class Chunk(WeakCallbackCaller):
 	def __init__(self, message_handler):
-		self.callback = message_handler
+		self.cbref = weakref.ref(message_handler)
 
 
-class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
+class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 	datapath = None
 	auxiliary = None
+	cbref = None
 	
 	def __init__(self, *args, **kwargs):
 		super(ControllerChannel, self).__init__(*args, **kwargs)
-		self.seq_lock = self.lock_cls()
+		self.seq_lock = Lock()
 		self.seq = []
 	
 	def send(self, message, **kwargs):
@@ -387,7 +373,12 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 			return self.locked_send(message, **kwargs)
 	
 	def locked_send(self, message, **kwargs):
-		message_handler = kwargs.get("callback")
+		message_handler = kwargs.get("callback") # callable object
+		if message_handler is None:
+			pass
+		else:
+			assert isinstance(message_handler, object)
+			assert callable(message_handler)
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if (oftype==18 and version==1) or (oftype==20 and version!=1): # OFPT_BARRIER_REQUEST
@@ -401,7 +392,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
 					else:
 						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
-				
+					
 					self.seq.append(Barrier(bxid))
 					self.seq.append(Chunk(message_handler))
 					super(ControllerChannel, self).send(msg)
@@ -412,7 +403,8 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 		else:
 			if self.callback != message_handler:
 				self.seq.append(Chunk(message_handler))
-			self.callback = message_handler
+			if message_handler:
+				self.cbfunc = weakref.ref(message_handler)
 		
 		super(ControllerChannel, self).send(message)
 	
@@ -444,10 +436,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 								if e.xid == xid:
 									self.seq = self.seq[self.seq.index(e)+1:]
 									if e.callback:
-										try:
-											return e.callback(message, self)
-										except CallbackDeadError:
-											pass # This should not happen
+										return e.callback(message, self)
 									return True
 								else:
 									assert False, "missing barrier(xid=%x) before barrier(xid=%x)" % (e.xid, xid)
@@ -459,10 +448,7 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 						e = self.seq[0]
 						if isinstance(e, Chunk):
 							if e.callback:
-								try:
-									return e.callback(message, self)
-								except CallbackDeadError:
-									del(self.seq[0])
+								return e.callback(message, self)
 			
 			if self.callback:
 				return self.callback(message, self)
@@ -474,33 +460,31 @@ class ControllerChannel(OpenflowChannel, WeakCallbackCaller):
 
 
 class RateLimit(object):
-	def __init__(self, lock_cls, spawn, size):
-		self._spawn = spawn
+	def __init__(self, size):
 		self.size = size
-		self.lock_cls = lock_cls
 		
-		self.cold_lock = self.lock_cls()
+		self.cold_lock = Lock()
 		self.cold = []
 		
-		self.loop_lock = self.lock_cls()
+		self.loop_lock = Lock()
 	
 	def spawn(self, func, *args, **kwargs):
 		with self.cold_lock:
 			self.cold.append((func, args, kwargs))
 		
-		self._spawn(self.loop)
+		spawn(self.loop)
 	
 	def loop(self):
 		with self.loop_lock:
 			while len(self.cold) > 0:
-				hot_lock = self.lock_cls()
+				hot_lock = Lock()
 				hot = []
 				children = {}
 				while len(hot) < self.size and len(self.cold) > 0:
 					task = None
 					with self.cold_lock:
 						task = self.cold.pop(0)
-				
+					
 					if task:
 						(func, args, kwargs) = task
 						def proxy():
@@ -508,19 +492,19 @@ class RateLimit(object):
 							with hot_lock:
 								hot.remove(task)
 						hot.append(task)
-						children[id(task)] = self._spawn(proxy)
-				
+						children[id(task)] = spawn(proxy)
+					
 					for task_id,job in tuple(children.items()):
 						running = False
 						with hot_lock:
 							if task_id in [id(task) for task in hot]:
 								running = True
-					
+						
 						if running:
 							job.join(0.5)
 						else:
 							chilren.pop(task)
-					
+						
 						break
 
 
@@ -531,8 +515,8 @@ class ParallelChannel(OpenflowChannel):
 	
 	def __init__(self, *args, **kwargs):
 		super(ParallelChannel, self).__init__(*args, **kwargs)
-		self.close_lock = self.lock_cls()
-		self.async_pool = RateLimit(self.lock_cls, self.spawn, self.async_rate)
+		self.close_lock = Lock()
+		self.async_pool = RateLimit(self.async_rate)
 	
 	def close(self):
 		with self.close_lock:
@@ -559,7 +543,7 @@ class ParallelChannel(OpenflowChannel):
 			if rated_call:
 				self.async_pool.spawn(proxy, message, channel)
 			else:
-				self.spawn(proxy, message, channel)
+				spawn(proxy, message, channel)
 		return super(ParallelChannel, self).handle_proxy(intercept)
 	
 	def socket_path(self, path):
@@ -580,14 +564,126 @@ class ParallelChannel(OpenflowChannel):
 	
 	def override_required(self, *args, **kwargs):
 		raise Error("Concrete MixIn required")
+
+
+def bound_socket(info, socktype):
+	if isinstance(info, socket.socket):
+		return info
+	elif isinstance(info, tuple) or isinstance(info, list):
+		infos = [o for o in socket.getaddrinfo(*info) if o[1]==socktype or o[1]==0]
+		(family, socktype, proto, canonname, sockaddr) = infos[0]
+		s = socket.socket(family, socktype)
+		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		s.bind(sockaddr)
+		return s
+	elif isinstance(info, str):
+		s = socket.socket(socket.AF_UNIX, socktype)
+		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		s.bind(info)
+		return s
+	else:
+		raise ValueError("unexpected %s" % info)
+
+
+def stream_socket(info):
+	return bound_socket(info, socket.SOCK_STREAM)
+
+
+def dgram_socket(info):
+	return bound_socket(info, socket.SOCK_DGRAM)
+
+
+class StreamServer(object):
+	channel_cls = None
+	def __init__(self, bound_sock):
+		self.accepting = False
+		self.sock = stream_socket(bound_sock)
+		self.channels_lock = Lock()
+		self.channels = set()
+		self.server_address = self.sock.getsockname()
 	
-	# Concrete MixIn must provide following methods
-	spawn = override_required
-	subprocess = override_required
-	event = override_required
-	jackin_server = override_required
-	monitor_server = override_required
-	temp_server = override_required
+	def start(self):
+		self.accepting = True
+		spawn(self.run)
+	
+	def run(self):
+		sock = self.sock
+		sock.settimeout(0.5)
+		sock.listen(10)
+		while self.accepting:
+			try:
+				s = sock.accept()
+			except socket.timeout:
+				continue
+			
+			ch = self.channel_cls(socket=s[0], remote_address=s[1], read_wrap=self.read_wrap)
+			ch.start()
+			spawn(self._loop_runner, ch)
+		sock.close()
+	
+	def _loop_runner(self, ch):
+		with self.channels_lock:
+			self.channels.add(ch)
+		ch.loop()
+		ch.close()
+		with self.channels_lock:
+			self.channels.remove(ch)
+	
+	def read_wrap(self, func):
+		def wrap(*args, **kwargs):
+			if self.accepting==False:
+				return b""
+			return default_wrapper(func)(*args, **kwargs)
+		return wrap
+	
+	def stop(self):
+		self.accepting = False
+		for ch in list(self.channels):
+			ch.close()
+
+
+class DgramServer(object):
+	channel_cls = None
+	def __init__(self, bound_sock):
+		self.accepting = False
+		self.sock = dgram_socket(bound_sock)
+		self.remotes_lock = Lock()
+		self.remotes = {}
+		self.remote_locks = {}
+	
+	def start(self):
+		self.accepting = True
+		spawn(self.run)
+	
+	def run(self):
+		sock = self.sock
+		while self.accepting:
+			try:
+				data,remote_address = sock.recv()
+			except socket.timeout:
+				continue
+			
+			with self.remotes_lock:
+				if remote_address in self.remotes:
+					ch = self.remotes[remote_address]
+					lock = self.remote_locks[remote_address]
+				else:
+					ch = self.channel_cls(sendto=sock.sendto, remote_address=remote_address, local_address=sock.getsockname())
+					ch.start()
+					self.remotes[remote_address] = ch
+					lock = Lock()
+					self.remote_locks[remote_address] = lock
+			
+			spawn(self.locked_loop, ch, lock, data)
+		sock.close()
+	
+	def locked_loop(self, ch, lock, data):
+		with lock:
+			ch.reader = StringIO.StringIO(data).read
+			ch.loop()
+	
+	def stop(self):
+		self.accepting = False
 
 
 class ParentChannel(ParallelChannel):
@@ -619,11 +715,11 @@ class ParentChannel(ParallelChannel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if oftype==0:
 				if self.jackin:
-					starter, self.jackin_shutdown, addr = self.jackin_server(self.helper_path("jackin"))
+					starter, self.jackin_shutdown, addr = self.jackin_server()
 					starter() # start after assignment especially for pthread
 				
 				if self.monitor:
-					starter, self.monitor_shutdown, addr = self.monitor_server(self.helper_path("monitor"))
+					starter, self.monitor_shutdown, addr = self.monitor_server()
 					starter() # start after assignment especially for pthread
 			
 			elif oftype==6: # FEATURES_REPLY
@@ -633,7 +729,32 @@ class ParentChannel(ParallelChannel):
 					self.helper_path("monitor")
 		
 		return message
-
+	
+	def jackin_server(self):
+		path = self.helper_path("jackin")
+		serv = type("JackinServer", (StreamServer,), dict(
+			channel_cls = type("JackinCChannel",(JackinChildChannel, AutoEchoChannel, LoggingChannel),{
+				"accept_versions":[self.version,],
+				"parent": self })))(path)
+		return serv.start, serv.stop, path
+	
+	def monitor_server(self):
+		path = self.helper_path("monitor")
+		serv = type("MonitorServer", (StreamServer,), dict(
+			channel_cls = type("MonitorCChannel",(MonitorChildChannel, AutoEchoChannel, LoggingChannel),{
+				"accept_versions":[self.version,],
+				"parent": self })))(path)
+		return serv.start, serv.stop, path
+	
+	def temp_server(self):
+		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		s.bind(("127.0.0.1", 0))
+		serv = type("TempServer", (StreamServer,), dict(
+			channel_cls = type("TempCChannel",(JackinChildChannel, AutoEchoChannel, LoggingChannel),{
+				"accept_versions":[self.version,],
+				"parent": self })))(s)
+		return serv.start, serv.stop, s.getsockname()
 
 class JackinChannel(ParentChannel):
 	jackin = True
@@ -646,18 +767,34 @@ class MonitorChannel(ParentChannel):
 class ChildChannel(OpenflowChannel):
 	parent = None # must be set
 	
+	def send(self, message, **kwargs):
+		super(ChildChannel, self).send(message, **kwargs)
+	
 	def handle(self, message, channel):
 		pass # ignore all messages
 
 
+class WeakCallback(object):
+	def __init__(self, channel):
+		self.channel = channel
+	
+	def __call__(self, message, upstream_channel):
+		self.channel.send(message)
+
+
 class JackinChildChannel(ChildChannel):
+	def __init__(self, *args, **kwargs):
+		super(JackinChildChannel, self).__init__(*args, **kwargs)
+		self.cbfunc = WeakCallback(self)
+	
 	def handle(self, message, channel):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype!=0:
 			self.parent.send(message, callback=self.cbfunc)
 	
-	def cbfunc(self, message, upstream_channel):
-		self.send(message)
+	def close(self):
+		self.cbfunc = None # unref
+		super(JackinChildChannel, self).close()
 
 
 class SyncTracker(object):
@@ -671,7 +808,7 @@ class SyncChannel(ParallelChannel):
 	def __init__(self, *args, **kwargs):
 		super(SyncChannel, self).__init__(*args, **kwargs)
 		self.syncs = {}
-		self.syncs_lock = self.lock_cls()
+		self.syncs_lock = Lock()
 	
 	def recv(self):
 		message = super(SyncChannel, self).recv()
@@ -694,11 +831,11 @@ class SyncChannel(ParallelChannel):
 	
 	def send_sync(self, message, **kwargs):
 		(version, oftype, length, xid) = parse_ofp_header(message)
-		x = SyncTracker(xid, self.event())
+		x = SyncTracker(xid, Event())
 		with self.syncs_lock:
 			self.syncs[x.xid] = x
 		self.send(message, **kwargs)
-		x.ev.wait()
+		x.ev.wait(timeout=self.timeout)
 		with self.syncs_lock:
 			self.syncs.pop(x.xid)
 		return x.data
@@ -742,7 +879,7 @@ class SyncChannel(ParallelChannel):
 		prepared = []
 		for message in messages:
 			(version, oftype, length, xid) = parse_ofp_header(message)
-			x = SyncTracker(xid, self.event())
+			x = SyncTracker(xid, Event())
 			with self.syncs_lock:
 				self.syncs[x.xid] = x
 			self.send(message, **kwargs)
@@ -760,197 +897,204 @@ class SyncChannel(ParallelChannel):
 		return results
 
 
-class ChannelStreamMixin:
-	closed = False
-	channel_cls = None
+class PortMonitorChannel(ControllerChannel, ParallelChannel):
+	def __init__(self, *args, **kwargs):
+		super(PortMonitorChannel, self).__init__(*args, **kwargs)
+		self.timeout = kwargs.get("timeout", 2.0)
+		self._ports_lock = Lock()
+		self._ports = []
+		self._ports_init = Event()
+		self._port_monitor_multi = dict()
+		
+		self._attach = weakref.WeakValueDictionary()
+		self._detach = weakref.WeakValueDictionary()
 	
-	def channel_handle(self, request, client_address):
-		ch = self.channel_cls(
-			socket=request,
-			remote_address=client_address,
-			local_address=self.server_address)
-		if request.gettimeout() is None:
-			request.settimeout(0.5)
-		
-		def health_check():
-			if self.closed or ch.closed:
-				return False
-			return True
-		
-		ch.messages = read_message(request.recv, health_check=health_check)
-		
-		self.channels.add(ch)
-		ch.start()
-		try:
-			ch.loop()
-		except Exception,e:
-			logging.getLogger(__name__).error(str(e), exc_info=True)
-		finally:
-			ch.close()
-		
-		try:
-			self.channels.remove(ch)
-		except:
-			pass
-
-
-class ChannelDatagramMixin:
-	channel_cls = None
-	
-	def channel_handle(self, request, client_address):
-		ch = None
-		for tmp in self.channels:
-			if tmp.remote_address == client_address:
-				ch = tmp
-				break
-		
-		for message in read_message(StringIO.StringIO(data).read):
+	def recv(self):
+		message = super(PortMonitorChannel, self).recv()
+		if message:
+			ofp_port = "!H6s16sIIIIII" # ofp_port v1.0
+			ofp_port_names = '''port_no hw_addr name
+				config state
+				curr advertised supported peer'''
+			if self.version in (2,3,4):
+				ofp_port = "!I4x6s2x16sIIIIIIII"
+				ofp_port_names = '''port_no hw_addr name
+					config state
+					curr advertised supported peer
+					curr_speed max_speed'''
+			elif self.version == 5:
+				ofp_port = "!IH2x6s2x6sII"
+				ofp_port_names = '''port_no length hw_addr name
+					config state'''
+			
 			(version, oftype, length, xid) = parse_ofp_header(message)
-			if ch and oftype==0:
-				ch.close()
-				try:
-					self.channels.remove(ch)
-				except:
-					pass
-				ch = None
+			if xid in self._port_monitor_multi and oftype==19: # MULTIPART_REPLY
+				assert self.version in (4,5)
+				(mptype, flags) = struct.unpack_from("!HH4x", message, offset=8)
+				if mptype==13: # OFPMP_PORT_DESC
+					ports = self._port_monitor_multi[xid]
+					offset = 16
+					while offset < length:
+						port = list(struct.unpack_from(ofp_port, message, offset=offset))
+						port[2] = port[2].partition('\0')[0]
+						ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
+						offset += struct.calcsize(ofp_port)
+				
+					if not flags&1:
+						with self._ports_lock:
+							self._ports_replace(ports)
+							self._ports_init.set()
+							del(self._port_monitor_multi[xid])
+			elif oftype==6 and self.version != 4: # FEATURES_REPLY
+				fmt = "!BBHIQIB3x"
+				assert struct.calcsize(fmt) % 8 == 0
+				offset = struct.calcsize(fmt+"II")
+				ports = []
+				while offset < length:
+					port = list(struct.unpack_from(ofp_port, message, offset=offset))
+					port[2] = port[2].partition('\0')[0]
+					ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
+					offset += struct.calcsize(ofp_port)
+				with self._ports_lock:
+					self._ports_replace(ports)
+					self._ports_init.set()
+			elif oftype==12: # PORT_STATUS
+				p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
+				reason = p[0]
+				port = list(p[1:])
+				port[2] = port[2].partition('\0')[0]
+				self._update_port(reason, namedtuple("ofp_port", ofp_port_names)(*port))
+		return message
+	
+	def _update_port(self, reason, port):
+		with self._ports_lock:
+			ports = self._ports
+			hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
+			if reason==0: # ADD
+				if self._ports_init.is_set():
+					assert not hit
+				ports.append(port)
+				
+				s = self._attach.get(port.port_no, self._attach.get(port.name))
+				if s:
+					s.set(port)
+					self._attach.pop(s)
+			elif reason==1: # DELETE
+				if self._ports_init.is_set():
+					assert hit
+				if hit:
+					assert len(hit) == 1
+					ports.remove(hit.pop())
+				
+				s = self._detach.get(port.port_no, self._detach.get(port.name))
+				if s:
+					s.set(port)
+					self._detach.pop(s)
+			elif reason==2: # MODIFY
+				if self._ports_init.is_set():
+					assert hit
+				if hit:
+					assert len(hit) == 1
+					old = hit.pop()
+					idx = ports.index(old)
+					ports.remove(old)
+					ports.insert(idx, port)
+				else:
+					ports.append(port)
+			else:
+				assert False, "unknown reason %d" % reason
+			self._ports = ports
+	
+	@property
+	def ports(self):
+		if not self._ports_init.is_set():
+			if self.version in (4, 5):
+				xid = hms_xid()
+				with self._ports_lock:
+					self._port_monitor_multi[xid] = []
+				self.send(struct.pack("!BBHIHH4x", self.version, 
+					18, # MULTIPART_REQUEST (v1.3, v1.4)
+					16, # struct.calcsize(fmt)==16
+					xid, 
+					13, # PORT_DESC
+					0, # no REQ_MORE
+					))
+			else:
+				self.send(ofp_header_only(5, version=self.version)) # FEATURES_REQUEST
+			self._ports_init.wait(timeout=self.timeout)
+		return tuple(self._ports)
+	
+	def _ports_replace(self, new_ports):
+		old_ports = self._ports
 		
-		if ch is None:
-			ch = self.channel_cls(
-				sendto=self.sendto,
-				remote_address=client_address,
-				local_address=self.server_address)
-			self.channels.add(ch)
-			ch.start()
+		old_nums = set([p.port_no for p in old_ports])
+		old_names = set([p.name for p in old_ports])
+		new_nums = set([p.port_no for p in new_ports])
+		new_names = set([p.name for p in new_ports])
 		
-		(data, socket) = request
-		f = StringIO.StringIO(data)
-		ch.messages = read_message(f.read)
-		try:
-			ch.loop()
-			if f.tell() < len(data):
-				warnings.warn("%d bytes not consumed" % (len(data)-f.tell()))
-		except Exception,e:
-			logging.getLogger(__name__).error(str(e), exc_info=True)
-		finally:
-			ch.messages = None
+		for port in old_ports:
+			if port.port_no in old_nums-new_nums:
+				with self._ports_lock:
+					s = self._detach.get(port.port_no)
+					if s:
+						s.set(port)
+						self._detach.pop(s)
+			if port.name in old_names-new_names:
+				with self._ports_lock:
+					s = self._detach.get(port.name)
+					if s:
+						s.set(port)
+						self._detach.pop(s)
 		
-		if ch.closed:
-			try:
-				self.channels.remove(ch)
-			except:
-				pass
-
-
-#
-# SocketServer.TCPServer, SocketServer.UnixStreamServer
-#
-class ChannelStreamServer(SocketServer.TCPServer, ChannelStreamMixin):
-	allow_reuse_address = True
-	timeout = 0.5
+		for port in new_ports:
+			if port.port_no in new_nums-old_nums:
+				with self._ports_lock:
+					s = self._attach.get(port.port_no)
+					if s:
+						s.set(port)
+						self._attach.pop(s)
+			if port.name in new_names-old_names:
+				with self._ports_lock:
+					s = self._attach.get(port.name)
+					if s:
+						s.set(port)
+						self._attach.pop(s)
+		
+		self._ports = new_ports
 	
-	def __init__(self, *args, **kwargs):
-		self.channels = set()
-		SocketServer.TCPServer.__init__(self, *args, **kwargs)
+	def close(self):
+		self._ports_init.set() # unlock the event
+		super(PortMonitorChannel, self).close()
 	
-	def server_close(self):
-		SocketServer.TCPServer.server_close(self)
-		self.closed = True
-		for ch in tuple(self.channels):
-			if ch.closed:
-				continue
-			ch.close()
-			try:
-				self.channels.remove(ch)
-			except:
-				pass
+	def wait_attach(self, num_or_name, timeout=10):
+		for port in self._ports:
+			if port.port_no == num_or_name or port.name == num_or_name:
+				return port
+		
+		with self._ports_lock:
+			if num_or_name not in self._attach:
+				result = self._attach[num_or_name] = Event()
+			else:
+				result = self._attach[num_or_name]
+		
+		if result.wait(timeout=timeout):
+			for port in self._ports:
+				if port.port_no == num_or_name or port.name == num_or_name:
+					return port
 	
-	def shutdown(self):
-		self.server_close()
-		SocketServer.TCPServer.shutdown(self)
-
-
-class ChannelUnixStreamServer(SocketServer.UnixStreamServer, ChannelStreamMixin):
-	allow_reuse_address = True
-	timeout = 0.5
-	
-	def __init__(self, *args, **kwargs):
-		self.channels = set()
-		SocketServer.UnixStreamServer.__init__(self, *args, **kwargs)
-	
-	def server_close(self):
-		SocketServer.UnixStreamServer.server_close(self)
-		self.closed = True
-		for ch in tuple(self.channels):
-			if ch.closed:
-				continue
-			ch.close()
-			try:
-				self.channels.remove(ch)
-			except:
-				pass
-	
-	def shutdown(self):
-		self.server_close()
-		SocketServer.UnixStreamServer.shutdown(self)
-
-
-#
-# SocketServer.UDPServer, SocketServer.UnixDatagramServer
-#
-class ChannelUDPServer(SocketServer.UDPServer, ChannelDatagramMixin):
-	allow_reuse_address = True
-	
-	def __init__(self, *args, **kwargs):
-		self.channels = set()
-		SocketServer.UDPServer.__init__(self, *args, **kwargs)
-	
-	def server_close(self):
-		SocketServer.UDPServer.server_close(self)
-		for ch in tuple(self.channels):
-			if ch.closed:
-				continue
-			ch.close()
-			try:
-				self.channels.remove(ch)
-			except:
-				pass
-	
-	def shutdown(self, *args, **kwargs):
-		self.server_close()
-		SocketServer.UDPServer.shutdown(self, *args, **kwargs)
-
-
-class ChannelUnixDatagramServer(SocketServer.UnixDatagramServer, ChannelDatagramMixin):
-	allow_reuse_address = True
-	
-	def __init__(self, *args, **kwargs):
-		self.channels = set()
-		SocketServer.UnixDatagramServer.__init__(self, *args, **kwargs)
-	
-	def server_close(self):
-		SocketServer.UnixDatagramServer.server_close(self)
-		for ch in tuple(self.channels):
-			if ch.closed:
-				continue
-			ch.close()
-			try:
-				self.channels.remove(ch)
-			except:
-				pass
-	
-	def shutdown(self, *args, **kwargs):
-		self.server_close()
-		SocketServer.UnixDatagramServer.shutdown(self, *args, **kwargs)
-
-
-# handlers
-class ChannelHandler(SocketServer.BaseRequestHandler):
-	def handle(self):
-		self.server.channel_handle(self.request, self.client_address)
-
-class DatagramRequestHandler(ChannelHandler, SocketServer.DatagramRequestHandler):
-	pass
-
-class StreamRequestHandler(ChannelHandler, SocketServer.StreamRequestHandler):
-	pass
-
+	def wait_detach(self, num_or_name, timeout=10):
+		hit = False
+		for port in self._ports:
+			if port.port_no == num_or_name or port.name == num_or_name:
+				hit = True
+		if not hit:
+			return num_or_name # already detached
+		
+		with self._ports_lock:
+			if num_or_name not in self._detach:
+				result = self._detach[num_or_name] = Event()
+			else:
+				result = self._detach[num_or_name]
+		
+		if result.wait(timeout=timeout):
+			return num_or_name

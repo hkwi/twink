@@ -1,41 +1,5 @@
 from __future__ import absolute_import
-import threading as nthreading
 from . import *
-from . import threading
-import struct
-
-__all__=("rule2ofp", "OvsChannel","AutoPacketOut")
-
-def rule2ofp(flowrule, version=4):
-	x,y = socket.socketpair()
-	ovs = type("C", (OvsChannel, threading.ParallelMixin), dict(accept_versions=(version,)))()
-	ovs.attach(x)
-	bare = type("S", (OpenflowChannel,), dict(accept_versions=(version,)))()
-	bare.attach(y)
-	
-	assert struct.unpack_from("!BBHI", ovs.recv())[1] == 0
-	assert struct.unpack_from("!BBHI", bare.recv())[1] == 0
-	
-	flow = None
-	def tf():
-		ovs.add_flow(flowrule)
-	ths = [nthreading.Thread(target=f) for f in (tf, ovs.loop)]
-	try:
-		[th.start() for th in ths]
-		flow = bare.recv()
-		barrier = struct.unpack_from("!BBHI", bare.recv())
-		if barrier[0] == 1:
-			assert barrier[1] == 18
-			bare.send(struct.pack("!BBHI", barrier[0], 19, 8, barrier[3]))
-		else:
-			assert barrier[1] == 20
-			bare.send(struct.pack("!BBHI", barrier[0], 21, 8, barrier[3]))
-	finally:
-		ovs.close()
-		bare.close()
-		[th.join() for th in ths]
-	
-	return flow
 
 class OvsChannel(ControllerChannel, ParallelChannel):
 	def add_flow(self, flow):
@@ -59,11 +23,10 @@ class OvsChannel(ControllerChannel, ParallelChannel):
 			cmd.append("tcp:%s:%d" % addr)
 			cmd.extend(args)
 			
-			subprocess = self.subprocess
 			p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
-				logging.getLogger(__name__).error(repr(cmd)+pstderr, exc_info=True)
+				logging.getLogger(__name__).error(repr(cmd)+pstderr.decode("UTF-8"), exc_info=True)
 			return pstdout
 		finally:
 			halt()
@@ -150,19 +113,21 @@ class AutoPacketOut(ControllerChannel):
 
 if __name__=="__main__":
 	logging.basicConfig(level=logging.DEBUG)
+#	globals().update(use_gevent())
 	
 	def handle(message, channel):
 		pass
 	
-	tcpserv = ChannelStreamServer(("0.0.0.0", 6653), StreamRequestHandler)
+	tcpserv = StreamServer(("0.0.0.0", 6653))
 	tcpserv.channel_cls = type("TestChannel", (
 		AutoPacketOut,
 		OvsChannel,
 		JackinChannel,
-		threading.ParallelMixin,
 		AutoEchoChannel,
+		ParallelChannel,
 		LoggingChannel),{
 			"accept_versions":[1,4,],
 			"handle": staticmethod(handle)
 		})
-	threading.serve_forever(tcpserv)
+	
+	serve_forever(tcpserv)

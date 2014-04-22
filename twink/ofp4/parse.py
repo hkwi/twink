@@ -1,3 +1,4 @@
+
 from __future__ import absolute_import
 import struct
 from collections import namedtuple
@@ -7,7 +8,7 @@ _len = len
 _type = type
 
 def _align(length):
-	return (length+7)/8*8
+	return (length+7)//8*8
 
 class _pos(object):
 	offset = 0
@@ -703,7 +704,7 @@ def ofp_table_feature_prop_oxm(message, offset):
 	offset = cursor.offset
 	
 	(type,length) = _unpack("HH", message, cursor)
-	oxm_ids = _unpack("%dI" % ((length-4)/4), message, cursor)
+	oxm_ids = _unpack("%dI" % ((length-4)//4), message, cursor)
 	cursor.offset += _align(length)-length
 	
 	return namedtuple("ofp_table_feature_prop_oxm",
@@ -1013,7 +1014,7 @@ def ofp_hello_elem_versionbitmap(message, offset):
 	(type, length) = _unpack("HH", message, cursor)
 	assert type == OFPHET_VERSIONBITMAP
 	
-	bitmaps = _unpack("%dI" % ((length-4)/4), message, cursor)
+	bitmaps = _unpack("%dI" % ((length-4)//4), message, cursor)
 	cursor.offset += _align(length) - length
 	
 	return namedtuple("ofp_hello_elem_versionbitmap",
