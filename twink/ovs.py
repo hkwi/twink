@@ -1,6 +1,40 @@
 from __future__ import absolute_import
 from . import *
 
+
+def rule2ofp(*rules, **kwargs):
+	version = kwargs.pop("version", 4)
+	results = []
+	def handle(msg, ch):
+		p = struct.unpack_from("!BBHI", msg)
+		if p[0] == 1 and p[1] == 18:
+			ch.send(struct.pack("!BBHI", p[0], 19, 8, p[3]))
+		elif p[0] != 1 and p[1] == 20:
+			ch.send(struct.pack("!BBHI", p[0], 21, 8, p[3]))
+		elif p[1] == 14:
+			results.append(msg)
+	
+	serv = type("Rule2ProtoServer", (StreamServer,), dict(
+		channel_cls = type("Rule2ProtoChannel", (OpenflowServerChannel,), dict(
+			handle = staticmethod(handle),
+			accept_versions=(version,)))))(("0.0.0.0",0))
+	th = spawn(serv.start)
+	
+	try:
+		for rule in rules:
+			cmd = ("ovs-ofctl",
+				"-O", "OpenFlow1%d" % (version-1),
+				"add-flow",
+				"tcp:%s:%d" % serv.server_address,
+				rule)
+			subprocess.check_output(cmd)
+	finally:
+		serv.stop()
+		th.join()
+	
+	return results
+
+
 class OvsChannel(ControllerChannel, ParallelChannel):
 	def add_flow(self, flow):
 		return self.ofctl("add-flow", flow)
