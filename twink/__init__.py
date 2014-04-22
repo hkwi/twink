@@ -511,7 +511,7 @@ class RateLimit(object):
 						break
 
 
-class ParallelChannel(OpenflowChannel):
+class ParallelChannel(OpenflowServerChannel):
 	# mixin for parent channel
 	socket_dir = None
 	async_rate = 0
