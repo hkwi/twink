@@ -8,7 +8,10 @@ import weakref
 import datetime
 from collections import namedtuple
 
-def sched(name):
+sched = None
+def set_sched(name):
+	global sched
+	
 	if __package__:
 		import importlib
 		sched = importlib.import_module(__package__+".sched_"+name)
@@ -20,9 +23,9 @@ def sched(name):
 	return mods
 
 def use_gevent():
-	return sched("gevent")
+	return set_sched("gevent")
 
-sched("basic")
+set_sched("basic")
 
 
 def default_wrapper(func):
@@ -742,7 +745,7 @@ class ParentChannel(ParallelChannel):
 	def monitor_server(self):
 		path = self.helper_path("monitor")
 		serv = type("MonitorServer", (StreamServer,), dict(
-			channel_cls = type("MonitorCChannel",(MonitorChildChannel, AutoEchoChannel, LoggingChannel),{
+			channel_cls = type("MonitorCChannel",(ChildChannel, AutoEchoChannel, LoggingChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })))(path)
 		return serv.start, serv.stop, path

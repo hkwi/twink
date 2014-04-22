@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 from . import *
 
-
 def rule2ofp(*rules, **kwargs):
 	version = kwargs.pop("version", 4)
 	results = []
@@ -18,7 +17,7 @@ def rule2ofp(*rules, **kwargs):
 		channel_cls = type("Rule2ProtoChannel", (OpenflowServerChannel,), dict(
 			handle = staticmethod(handle),
 			accept_versions=(version,)))))(("0.0.0.0",0))
-	th = spawn(serv.start)
+	th = sched.spawn(serv.start)
 	
 	try:
 		for rule in rules:
@@ -27,7 +26,7 @@ def rule2ofp(*rules, **kwargs):
 				"add-flow",
 				"tcp:%s:%d" % serv.server_address,
 				rule)
-			subprocess.check_output(cmd)
+			sched.subprocess.check_output(cmd)
 	finally:
 		serv.stop()
 		th.join()
@@ -57,7 +56,7 @@ class OvsChannel(ControllerChannel, ParallelChannel):
 			cmd.append("tcp:%s:%d" % addr)
 			cmd.extend(args)
 			
-			p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+			p = sched.subprocess.Popen(cmd, stdout=sched.subprocess.PIPE, stderr=sched.subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
 				logging.getLogger(__name__).error(repr(cmd)+pstderr.decode("UTF-8"), exc_info=True)
