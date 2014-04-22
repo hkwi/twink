@@ -8,7 +8,10 @@ import weakref
 import datetime
 from collections import namedtuple
 
-def sched(name):
+sched = None
+def set_sched(name):
+	global sched
+	
 	if __package__:
 		import importlib
 		sched = importlib.import_module(__package__+".sched_"+name)
@@ -20,9 +23,9 @@ def sched(name):
 	return mods
 
 def use_gevent():
-	return sched("gevent")
+	return set_sched("gevent")
 
-sched("basic")
+set_sched("basic")
 
 
 def default_wrapper(func):
@@ -315,7 +318,7 @@ class OpenflowServerChannel(OpenflowChannel):
 					break
 				
 				self.handle_proxy(self.handle)(message, self)
-		finally:
+		except ChannelClose:
 			self.close()
 	
 	def handle_proxy(self, handle):
@@ -604,12 +607,13 @@ class StreamServer(object):
 	
 	def start(self):
 		self.accepting = True
+		sock = self.sock
+		sock.settimeout(0.5)
+		sock.listen(10)
 		spawn(self.run)
 	
 	def run(self):
 		sock = self.sock
-		sock.settimeout(0.5)
-		sock.listen(10)
 		while self.accepting:
 			try:
 				s = sock.accept()
