@@ -11,13 +11,7 @@ from collections import namedtuple
 sched = None
 def set_sched(name):
 	global sched
-	
-	if __package__:
-		import importlib
-		sched = importlib.import_module(__package__+".sched_"+name)
-	else:
-		sched = __import__("sched_"+name, globals(), locals(), ["*"])
-	
+	sched = __import__("sched_"+name, globals(), locals(), ["*"])
 	mods = [(k, getattr(sched,k)) for k in "subprocess socket Queue Lock Event spawn serve_forever".split()]
 	globals().update(mods)
 	return mods
