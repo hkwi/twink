@@ -21,13 +21,13 @@ class Lock(object):
 
 def serve_forever(*servers, **opts):
 	for serv in servers:
-		serv.start()
+		spawn(serv.start)
 	
 	try:
 		opts.get("main", Event()).wait()
 	finally:
-		for serv in servers:
-			serv.stop()
+		for job in [spawn(serv.stop) for serv in servers]:
+			job.join()
 
 
 if __name__=="__main__":
