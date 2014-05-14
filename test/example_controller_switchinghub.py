@@ -1,3 +1,4 @@
+import os
 import logging
 import twink
 import twink.ovs
@@ -41,8 +42,10 @@ class TestChannel(
 
 
 if __name__=="__main__":
+	if os.environ.get("USE_GEVENT"):
+		twink.use_gevent()
 	logging.basicConfig(level=logging.DEBUG)
 	tcpserv = twink.StreamServer(("0.0.0.0", 6653))
 	tcpserv.channel_cls = TestChannel
-	twink.serve_forever(tcpserv)
+	twink.sched.serve_forever(tcpserv)
 
