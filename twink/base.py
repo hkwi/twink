@@ -603,18 +603,20 @@ class StreamServer(object):
 		sched.spawn(self.run)
 	
 	def run(self):
-		with contextlib.closing(self.sock) as sock:
+		try:
 			while self.accepting:
 				try:
-					s = sock.accept()
+					s = self.sock.accept()
 				except sched.socket.timeout:
 					continue
 			
 				ch = self.channel_cls(socket=s[0], remote_address=s[1], read_wrap=self.read_wrap)
 				ch.start()
 				sched.spawn(self._loop_runner, ch)
-		if self.atexit:
-			self.atexit()
+		finally:
+			self.sock.close()
+			if self.atexit:
+				self.atexit()
 	
 	def _loop_runner(self, ch):
 		with self.channels_lock:
