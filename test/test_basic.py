@@ -22,7 +22,7 @@ class BasicTestCase(unittest.TestCase):
 		serv.channel_cls = type("TcpChannel",(twink.ControllerChannel, twink.LoggingChannel),{
 				"accept_versions":[4,],
 				"handle":staticmethod(dummy_handle)})
-		serv_thread = twink.spawn(serv.start)
+		serv_thread = twink.sched.spawn(serv.start)
 		
 		signal_stop = serv.stop
 		try:

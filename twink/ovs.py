@@ -1,5 +1,6 @@
 from __future__ import absolute_import
-from . import *
+import struct
+from . import base
 
 def rule2ofp(*rules, **kwargs):
 	version = kwargs.pop("version", 4)
@@ -13,11 +14,11 @@ def rule2ofp(*rules, **kwargs):
 		elif p[1] == 14:
 			results.append(msg)
 	
-	serv = type("Rule2ProtoServer", (StreamServer,), dict(
-		channel_cls = type("Rule2ProtoChannel", (OpenflowServerChannel,), dict(
+	serv = type("Rule2ProtoServer", (base.StreamServer,), dict(
+		channel_cls = type("Rule2ProtoChannel", (base.OpenflowServerChannel,), dict(
 			handle = staticmethod(handle),
 			accept_versions=(version,)))))(("0.0.0.0",0))
-	th = sched.spawn(serv.start)
+	th = base.sched.spawn(serv.start)
 	
 	try:
 		for rule in rules:
@@ -26,7 +27,7 @@ def rule2ofp(*rules, **kwargs):
 				"add-flow",
 				"tcp:%s:%d" % serv.server_address,
 				rule)
-			sched.subprocess.check_output(cmd)
+			base.sched.subprocess.check_output(cmd)
 	finally:
 		serv.stop()
 		th.join()
@@ -34,7 +35,7 @@ def rule2ofp(*rules, **kwargs):
 	return results
 
 
-class OvsChannel(ControllerChannel, ParallelChannel):
+class OvsChannel(base.ControllerChannel, base.ParallelChannel):
 	def add_flow(self, flow):
 		return self.ofctl("add-flow", flow)
 	
@@ -56,7 +57,8 @@ class OvsChannel(ControllerChannel, ParallelChannel):
 			cmd.append("tcp:%s:%d" % addr)
 			cmd.extend(args)
 			
-			p = sched.subprocess.Popen(cmd, stdout=sched.subprocess.PIPE, stderr=sched.subprocess.PIPE)
+			subprocess = base.sched.subprocess
+			p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
 				logging.getLogger(__name__).error(repr(cmd)+pstderr.decode("UTF-8"), exc_info=True)
@@ -118,7 +120,7 @@ class OvsChannel(ControllerChannel, ParallelChannel):
 		return ret
 
 
-class AutoPacketOut(ControllerChannel):
+class AutoPacketOut(base.ControllerChannel):
 	'''
 	openvswitch-switch sometimes sends dummy OFPT_PACKET_IN instead of sending OFPT_ECHO_REQUEST.
 	We must send OFPT_PACKET_OUT, or openvswitch-switch thinks the connection is dead.
@@ -151,7 +153,7 @@ if __name__=="__main__":
 	def handle(message, channel):
 		pass
 	
-	tcpserv = StreamServer(("0.0.0.0", 6653))
+	tcpserv = base.StreamServer(("0.0.0.0", 6653))
 	tcpserv.channel_cls = type("TestChannel", (
 		AutoPacketOut,
 		OvsChannel,
@@ -163,4 +165,4 @@ if __name__=="__main__":
 			"handle": staticmethod(handle)
 		})
 	
-	serve_forever(tcpserv)
+	base.sched.serve_forever(tcpserv)

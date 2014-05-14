@@ -6,13 +6,13 @@ def timeout_pause(func):
 	def wrap(*args, **kwargs):
 		try:
 			return func(*args, **kwargs)
-		except twink.socket.timeout:
+		except twink.sched.socket.timeout:
 			return b""
 	return wrap
 
 class ChannelTestCase(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.Channel(socket=a)
 		y = twink.Channel(socket=b)
@@ -26,7 +26,7 @@ class ChannelTestCase(unittest.TestCase):
 		y.close()
 
 	def test_pair2(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.Channel(socket=a)
 		y = twink.Channel(socket=b, read_wrap=timeout_pause)
@@ -40,7 +40,7 @@ class ChannelTestCase(unittest.TestCase):
 		y.close()
 
 	def test_pair3(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.Channel(socket=a)
 		y = twink.Channel(socket=b)
@@ -57,7 +57,7 @@ class ChannelTestCase(unittest.TestCase):
 
 class OpenflowBaseChannelTestCase(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.OpenflowBaseChannel(socket=a)
 		y = twink.OpenflowBaseChannel(socket=b)
@@ -72,7 +72,7 @@ class OpenflowBaseChannelTestCase(unittest.TestCase):
 		y.close()
 
 	def test_pair2(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.OpenflowBaseChannel(socket=a)
 		y = twink.OpenflowBaseChannel(socket=b, read_wrap=timeout_pause)
@@ -86,7 +86,7 @@ class OpenflowBaseChannelTestCase(unittest.TestCase):
 		y.close()
 
 	def test_pair3(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.OpenflowBaseChannel(socket=a)
 		y = twink.OpenflowBaseChannel(socket=b)
@@ -103,7 +103,7 @@ class OpenflowBaseChannelTestCase(unittest.TestCase):
 
 class OpenflowChannelTestCase(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.OpenflowChannel()
 		y = twink.OpenflowChannel()
@@ -133,7 +133,7 @@ class TypesCapture(object):
 
 class AutoEchoChannelTestCase(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.AutoEchoChannel()
 		x.handle = TypesCapture()
@@ -164,7 +164,7 @@ def auto_echo(msg, ch):
 
 class OpenflowServerChannelTestCase(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.OpenflowChannel(socket=a)
 		y = type("OpenflowServerChannelTestCaseY", (twink.OpenflowServerChannel,), {})(socket=b)
@@ -172,7 +172,7 @@ class OpenflowServerChannelTestCase(unittest.TestCase):
 		
 		x.start()
 		y.start()
-		yth = twink.spawn(y.loop)
+		yth = twink.sched.spawn(y.loop)
 		
 		assert len(x.recv()) > 0
 		assert x.version == 4
@@ -204,7 +204,7 @@ class BarrieredReply(object):
 
 class ControllerChannelTestCase2(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = type("ControllerChannelTestCaseX", (twink.OpenflowServerChannel,twink.LoggingChannel), {})(socket=a)
 		x.handle = BarrieredReply()
@@ -213,7 +213,7 @@ class ControllerChannelTestCase2(unittest.TestCase):
 		
 		x.start()
 		y.start()
-		xth = twink.spawn(x.loop)
+		xth = twink.sched.spawn(x.loop)
 		
 		result = dict(flag1=0, flag2=0)
 		def cb1(message, ch):
@@ -240,14 +240,14 @@ class ControllerChannelTestCase2(unittest.TestCase):
 
 class StreamServerTestCase(unittest.TestCase):
 	def test_server(self):
-		s = twink.socket.socket(twink.socket.AF_INET, twink.socket.SOCK_STREAM)
+		s = twink.sched.socket.socket(twink.sched.socket.AF_INET, twink.sched.socket.SOCK_STREAM)
 		s.bind(("127.0.0.1", 0))
 		serv = type("S", (twink.StreamServer,), dict(
 			channel_cls=type("Sc", (twink.AutoEchoChannel, twink.LoggingChannel), 
 				dict(handle=staticmethod(lambda a,b:None)))))(s)
 		serv.start()
 		
-		c = twink.socket.socket(twink.socket.AF_INET, twink.socket.SOCK_STREAM)
+		c = twink.sched.socket.socket(twink.sched.socket.AF_INET, twink.sched.socket.SOCK_STREAM)
 		c.connect(s.getsockname())
 		ch = type("Cc", (twink.OpenflowChannel, twink.LoggingChannel), {})()
 		ch.attach(c)
@@ -269,14 +269,14 @@ class SampleApp(object):
 
 class ControllerChannelTestCase(unittest.TestCase):
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = type("C", (twink.ControllerChannel, twink.OpenflowServerChannel), {})(socket=a)
 		x.handle = SampleApp()
 		y = twink.OpenflowChannel(socket=b)
 		
 		x.start()
-		xth = twink.spawn(x.loop)
+		xth = twink.sched.spawn(x.loop)
 		
 		y.start()
 		with twink.ReadWrapper(y, timeout_pause):
@@ -307,7 +307,7 @@ class SyncChannelTestCase(unittest.TestCase):
 			channel.close()
 	
 	def test_pair1(self):
-		a,b = twink.socket.socketpair()
+		a,b = twink.sched.socket.socketpair()
 		
 		x = twink.PortMonitorChannel(socket=a)
 		x.handle = self.controller
@@ -316,8 +316,8 @@ class SyncChannelTestCase(unittest.TestCase):
 		
 		x.start()
 		y.start()
-		xl = twink.spawn(x.loop)
-		yl = twink.spawn(y.loop)
+		xl = twink.sched.spawn(x.loop)
+		yl = twink.sched.spawn(y.loop)
 		
 		xl.join()
 		yl.join()
