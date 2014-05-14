@@ -2,6 +2,11 @@ from __future__ import absolute_import
 import struct
 from . import base
 
+try:
+	base.sched.subprocess.check_call(("ovs-vsctl", "-V"), stdout=base.sched.subprocess.PIPE)
+except OSError:
+	raise RuntimeError("ovs-vsctl not found in PATH")
+
 def rule2ofp(*rules, **kwargs):
 	version = kwargs.pop("version", 4)
 	results = []
