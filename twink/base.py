@@ -593,7 +593,6 @@ class StreamServer(object):
 		self.channels_lock = sched.Lock()
 		self.channels = set()
 		self.server_address = self.sock.getsockname()
-		self.atexit = kwargs.get("atexit")
 	
 	def start(self):
 		self.accepting = True
@@ -613,10 +612,10 @@ class StreamServer(object):
 				ch = self.channel_cls(socket=s[0], remote_address=s[1], read_wrap=self.read_wrap)
 				ch.start()
 				sched.spawn(self._loop_runner, ch)
+		except:
+			logging.getLogger(__name__).error("accepting loop failed", exc_info=True)
 		finally:
 			self.sock.close()
-			if self.atexit:
-				self.atexit()
 	
 	def _loop_runner(self, ch):
 		with self.channels_lock:
