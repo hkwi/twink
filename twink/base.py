@@ -612,8 +612,6 @@ class StreamServer(object):
 				ch = self.channel_cls(socket=s[0], remote_address=s[1], read_wrap=self.read_wrap)
 				ch.start()
 				sched.spawn(self._loop_runner, ch)
-		except:
-			logging.getLogger(__name__).error("accepting loop failed", exc_info=True)
 		finally:
 			self.sock.close()
 	
