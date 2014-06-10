@@ -21,7 +21,7 @@ class Lock(object):
 
 def serve_forever(*servers, **opts):
 	for serv in servers:
-		spawn(serv.start)
+		serv.start()
 	
 	try:
 		opts.get("main", Event()).wait()
