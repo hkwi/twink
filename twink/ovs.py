@@ -141,7 +141,7 @@ class AutoPacketOut(base.ControllerChannel):
 		if not self.auto_packet_out:
 			return
 		
-		(version, oftype, length, xid) = parse_ofp_header(message)
+		(version, oftype, length, xid) = base.parse_ofp_header(message)
 		if oftype == 10:
 			(buffer_id,) = struct.unpack_from("!I", message, offset=8)
 			if version==1:
@@ -163,10 +163,10 @@ if __name__=="__main__":
 	tcpserv.channel_cls = type("TestChannel", (
 		AutoPacketOut,
 		OvsChannel,
-		JackinChannel,
-		AutoEchoChannel,
-		ParallelChannel,
-		LoggingChannel),{
+		base.JackinChannel,
+		base.AutoEchoChannel,
+		base.ParallelChannel,
+		base.LoggingChannel),{
 			"accept_versions":[1,4,],
 			"handle": staticmethod(handle)
 		})
