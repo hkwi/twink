@@ -8,3 +8,4 @@ class _sched_proxy(object):
 		raise AttributeError("No such attribute")
 
 sched = _sched_proxy()
+serve_forever=sched.serve_forever
