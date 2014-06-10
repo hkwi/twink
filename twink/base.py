@@ -680,7 +680,7 @@ class DgramServer(object):
 		self.accepting = False
 
 
-class ParentChannel(ParallelChannel):
+class ParentChannel(ControllerChannel, ParallelChannel):
 	jackin = False
 	monitor = False
 	jackin_shutdown = None
