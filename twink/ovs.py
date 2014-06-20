@@ -67,7 +67,7 @@ class OvsChannel(base.ControllerChannel, base.ParallelChannel):
 			p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 			(pstdout, pstderr) = p.communicate()
 			if p.returncode != 0:
-				logging.getLogger(__name__).error(repr(cmd)+pstderr.decode("UTF-8"), exc_info=True)
+				logging.getLogger(__name__).error(repr(cmd)+pstderr.decode("UTF-8"))
 			return pstdout
 		finally:
 			halt()
