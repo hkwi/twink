@@ -962,27 +962,26 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 	
 	def _update_port(self, reason, port):
 		with self._ports_lock:
-			ports = self._ports
-			hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
+			hit = [x for x in self._ports if x[0]==port[0]] # check with port_no(0)
 			if reason==0: # ADD
 				if self._ports_init.is_set():
 					assert not hit
-				ports.append(port)
+				self._ports.append(port)
 				
 				s = self._attach.get(port.port_no, self._attach.get(port.name))
 				if s:
-					s.set(port)
+					s.set()
 					self._attach.pop(s)
 			elif reason==1: # DELETE
 				if self._ports_init.is_set():
 					assert hit
 				if hit:
 					assert len(hit) == 1
-					ports.remove(hit.pop())
+					self._ports.remove(hit.pop())
 				
 				s = self._detach.get(port.port_no, self._detach.get(port.name))
 				if s:
-					s.set(port)
+					s.set()
 					self._detach.pop(s)
 			elif reason==2: # MODIFY
 				if self._ports_init.is_set():
@@ -991,13 +990,12 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 					assert len(hit) == 1
 					old = hit.pop()
 					idx = ports.index(old)
-					ports.remove(old)
-					ports.insert(idx, port)
+					self._ports.remove(old)
+					self._ports.insert(idx, port)
 				else:
-					ports.append(port)
+					self._ports.append(port)
 			else:
 				assert False, "unknown reason %d" % reason
-			self._ports = ports
 	
 	@property
 	def ports(self):
@@ -1020,6 +1018,7 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 	
 	def _ports_replace(self, new_ports):
 		old_ports = self._ports
+		self._ports = new_ports
 		
 		old_nums = set([p.port_no for p in old_ports])
 		old_names = set([p.name for p in old_ports])
@@ -1031,13 +1030,13 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				with self._ports_lock:
 					s = self._detach.get(port.port_no)
 					if s:
-						s.set(port)
+						s.set()
 						self._detach.pop(s)
 			if port.name in old_names-new_names:
 				with self._ports_lock:
 					s = self._detach.get(port.name)
 					if s:
-						s.set(port)
+						s.set()
 						self._detach.pop(s)
 		
 		for port in new_ports:
@@ -1045,16 +1044,14 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				with self._ports_lock:
 					s = self._attach.get(port.port_no)
 					if s:
-						s.set(port)
+						s.set()
 						self._attach.pop(s)
 			if port.name in new_names-old_names:
 				with self._ports_lock:
 					s = self._attach.get(port.name)
 					if s:
-						s.set(port)
+						s.set()
 						self._attach.pop(s)
-		
-		self._ports = new_ports
 	
 	def close(self):
 		self._ports_init.set() # unlock the event
