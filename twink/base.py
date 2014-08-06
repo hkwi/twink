@@ -989,7 +989,7 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				if hit:
 					assert len(hit) == 1
 					old = hit.pop()
-					idx = ports.index(old)
+					idx = self._ports.index(old)
 					self._ports.remove(old)
 					self._ports.insert(idx, port)
 				else:
