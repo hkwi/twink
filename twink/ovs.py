@@ -144,6 +144,9 @@ class AutoPacketOut(base.ControllerChannel):
 		(version, oftype, length, xid) = base.parse_ofp_header(message)
 		if oftype == 10:
 			(buffer_id,) = struct.unpack_from("!I", message, offset=8)
+			if buffer_id == 0xffffffff: # OFP_NO_BUFFER
+				return
+			
 			if version==1:
 				self.send(struct.pack("!BBHIIHH", version, 13, struct.calcsize("!BBHIIHH"), xid,
 					buffer_id, 0xffff, 0))
