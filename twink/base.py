@@ -317,6 +317,9 @@ class OpenflowServerChannel(OpenflowChannel):
 		pass
 
 class AutoEchoChannel(OpenflowServerChannel):
+	'''
+	AuthEchoChannel steals ECHO_REQUEST and automatically send echo response.
+	'''
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
 			if message:
@@ -751,10 +754,17 @@ class ParentChannel(ControllerChannel, ParallelChannel):
 		return serv.start, serv.stop, s.getsockname()
 
 class JackinChannel(ParentChannel):
+	'''
+	MonitorChannel opens unix domain sockets for openflow operators(jackin programs),
+	such as ovs-ofctl.
+	'''
 	jackin = True
 
 
 class MonitorChannel(ParentChannel):
+	'''
+	MonitorChannel opens unix domain sockets for openflow message listeners(monitors).
+	'''
 	monitor = True
 
 
@@ -799,6 +809,9 @@ class SyncTracker(object):
 
 
 class SyncChannel(ParallelChannel):
+	'''
+	SyncChannel adds synchronous methods.
+	'''
 	def __init__(self, *args, **kwargs):
 		super(SyncChannel, self).__init__(*args, **kwargs)
 		self.syncs = {}
@@ -892,6 +905,9 @@ class SyncChannel(ParallelChannel):
 
 
 class PortMonitorChannel(ControllerChannel, ParallelChannel):
+	'''
+	PortMonitorChannel exposes `ports` property, which will be synced with the openflow switch.
+	'''
 	def __init__(self, *args, **kwargs):
 		super(PortMonitorChannel, self).__init__(*args, **kwargs)
 		self.timeout = kwargs.get("timeout", 2.0)
