@@ -168,28 +168,25 @@ class LoggingChannel(OpenflowBaseChannel):
 	channel_log_name = "channel"
 	send_log_name = "send"
 	recv_log_name = "recv"
-	remote = ""
 	
 	def __init__(self, *args, **kwargs):
 		super(LoggingChannel, self).__init__(*args, **kwargs)
-		if self.remote_address:
-			self.remote = " from %s" % self.remote_address[0]
-		logging.getLogger(self.channel_log_name).info("%s connect%s" % (self, self.remote))
+		logging.getLogger(self.channel_log_name).info("%s connect" % self)
 	
 	def send(self, message, **kwargs):
-		logging.getLogger(self.send_log_name).debug("%s %s" % (self, binascii.b2a_hex(message)))
+		logging.getLogger(self.send_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
 		return super(LoggingChannel, self).send(message, **kwargs)
 	
 	def recv(self):
 		message = super(LoggingChannel, self).recv()
 		if message: # ignore b"" and None
-			logging.getLogger(self.recv_log_name).debug("%s %s" % (self, binascii.b2a_hex(message)))
+			logging.getLogger(self.recv_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
 		return message
 	
 	def close(self):
 		if not self.closed:
 			super(LoggingChannel, self).close()
-			logging.getLogger(self.channel_log_name).info("%s close%s" % (self, self.remote))
+			logging.getLogger(self.channel_log_name).info("%s close" % self)
 
 
 class OpenflowChannel(OpenflowBaseChannel):
