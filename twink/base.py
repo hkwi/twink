@@ -688,6 +688,7 @@ class ParentChannel(ControllerChannel, ParallelChannel):
 	monitor = False
 	jackin_shutdown = None
 	monitor_shutdown = None
+	monitors = set()
 	
 	def close(self):
 		if self.jackin_shutdown:
@@ -712,18 +713,24 @@ class ParentChannel(ControllerChannel, ParallelChannel):
 			(version, oftype, length, xid) = parse_ofp_header(message)
 			if oftype==0:
 				if self.jackin:
-					starter, self.jackin_shutdown, addr = self.jackin_server()
-					starter() # start after assignment especially for pthread
+					serv, addr = self.jackin_server()
+					self.jackin_shutdown = serv.stop
+					serv.start() # start after assignment especially for pthread
 				
 				if self.monitor:
-					starter, self.monitor_shutdown, addr = self.monitor_server()
-					starter() # start after assignment especially for pthread
-			
-			elif oftype==6: # FEATURES_REPLY
-				if self.jackin:
-					self.helper_path("jackin")
-				if self.monitor:
-					self.helper_path("monitor")
+					serv, addr = self.monitor_server()
+					self.monitor_shutdown = serv.stop
+					self.monitors = serv.channels
+					serv.start() # start after assignment especially for pthread
+			else:
+				if oftype==6: # FEATURES_REPLY
+					if self.jackin:
+						self.helper_path("jackin")
+					if self.monitor:
+						self.helper_path("monitor")
+				
+				for ch in self.mointors:
+					ch.send(message)
 		
 		return message
 	
@@ -733,7 +740,7 @@ class ParentChannel(ControllerChannel, ParallelChannel):
 			channel_cls = type("JackinCChannel",(JackinChildChannel, AutoEchoChannel, LoggingChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })))(path)
-		return serv.start, serv.stop, path
+		return serv, path
 	
 	def monitor_server(self):
 		path = self.helper_path("monitor")
@@ -741,7 +748,7 @@ class ParentChannel(ControllerChannel, ParallelChannel):
 			channel_cls = type("MonitorCChannel",(ChildChannel, AutoEchoChannel, LoggingChannel),{
 				"accept_versions":[self.version,],
 				"parent": self })))(path)
-		return serv.start, serv.stop, path
+		return serv, path
 	
 	def temp_server(self):
 		s = sched.socket.socket(sched.socket.AF_INET, sched.socket.SOCK_STREAM)
