@@ -729,7 +729,7 @@ class ParentChannel(ControllerChannel, ParallelChannel):
 					if self.monitor:
 						self.helper_path("monitor")
 				
-				for ch in self.mointors:
+				for ch in self.monitors:
 					ch.send(message)
 		
 		return message
