@@ -349,7 +349,10 @@ class Barrier(WeakCallbackCaller):
 
 class Chunk(WeakCallbackCaller):
 	def __init__(self, message_handler):
-		self.cbref = weakref.ref(message_handler)
+		if message_handler:
+			self.cbref = weakref.ref(message_handler)
+		else:
+			self.cbref = None
 
 
 class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
