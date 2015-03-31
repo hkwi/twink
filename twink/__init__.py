@@ -1,4 +1,4 @@
-import base
+from . import base
 from .base import *
 
 class _sched_proxy(object):
