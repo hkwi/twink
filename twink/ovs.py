@@ -72,34 +72,43 @@ class OvsChannel(base.ControllerChannel, base.ParallelChannel):
 		finally:
 			halt()
 	
+	# as of openvswitch 2.3.1
 	def _make_ofctl_options(self, options):
 		# key name, double hyphn, take arg type, join with equal
 		fields = ("name", "detail", "argtype", "joinWithEqual")
 		option_list = (
+			("t", False, int, False), ("timeout", True, int, True),
 			("strict", True, None, False),
-			("O", False, str, False), ("protocols", True, str, True),
+			("readd", True, None, False),
 			("F", False, str, False), ("flow_format", True, str, True),
 			("P", False, str, False), ("packet_in_format", True, str, True),
-			("timestamp", True, None, False),
 			("m", False, None, False), ("more", True, None, False),
+			("timestamp", True, None, False),
 			("sort", True, str, True),
 			("rsort", True, str, True),
+			("unixctl", True, str, True),
+			("h", False, None, False), ("help", True, None, False),
+			# DAEMON_LONG_OPTIONS
+			("detach", True, None, False),
+			("no_chdir", True, None, False),
 			("pidfile", True, str, True),
 			("overwrite_pidfile", True, None, False),
-			("detach", True, None, False),
 			("monitor", True, None, False),
-			("no_chdir", True, None, False),
+			# DAEMON_LONG_OPTIONS _WIN32
+			("pipe_handle", True, str, True),
+			("service", True, None, False),
+			("service-monitor", True, None, False),
+			# OFP_VERSION_LONG_OPTIONS
+			("V", False, None, False), ("version", True, None, False),
+			("O", False, str, False), ("protocols", True, str, True),
+			# VLOG_LONG_OPTIONS
+			("v", False, str, False), ("verbose", True, str, True),
+			("log_file", True, str, True),
+			("syslog_target", True, str, True),
+			# STREAM_SSL_LONG_OPTIONS
 			("p", False, str, False), ("private_key", True, str, True),
 			("c", False, str, False), ("certificate", True, str, True),
 			("C", False, str, False), ("ca_cert", True, str, True),
-			("v", False, str, False), ("verbose", True, str, True),
-			("log_file", True, str, True),
-			("h", False, None, False), ("help", True, None, False),
-			("V", False, None, False), ("version", True, None, False),
-			("idle_timeout", True, int, True),
-			("hard_timeout", True, int, True),
-			("send_flow_rem", True, None, False),
-			("check_overlap", True, None, False)
 			)
 		known_opts = dict()
 		for option_item in option_list:
