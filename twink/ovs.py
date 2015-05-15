@@ -6,7 +6,7 @@ from . import base
 try:
 	base.sched.subprocess.check_call(("ovs-ofctl", "-V"), stdout=base.sched.subprocess.PIPE)
 except OSError:
-	raise RuntimeError("ovs-vsctl not found in PATH")
+	raise RuntimeError("ovs-ofctl not found in PATH")
 
 def rule2ofp(*rules, **kwargs):
 	version = kwargs.pop("version", 4)
