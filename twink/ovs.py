@@ -42,11 +42,11 @@ def rule2ofp(*rules, **kwargs):
 
 
 class OvsChannel(base.ControllerChannel, base.ParallelChannel):
-	def add_flow(self, flow):
-		return self.ofctl("add-flow", flow)
+	def add_flow(self, flow, **kwargs):
+		return self.ofctl("add-flow", flow, **kwargs)
 	
-	def mod_flows(self, flow, strict=False):
-		return self.ofctl("mod-flows", flow, strict=strict)
+	def mod_flows(self, flow, **kwargs):
+		return self.ofctl("mod-flows", flow, **kwargs)
 	
 	def ofctl(self, action, *args, **options):
 		starter, halt, addr = self.temp_server()
