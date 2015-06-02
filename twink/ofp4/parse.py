@@ -117,7 +117,7 @@ def ofp_(message, offset):
 def ofp_port(message, offset):
 	cursor = _cursor(offset)
 	p = list(_unpack("I4x6s2x16sII6I", message, cursor))
-	p[2] = p[2].partition("\0")[0]
+	p[2] = p[2].partition(b"\0")[0].decode("UTF-8")
 	return namedtuple("ofp_port", '''
 		port_no hw_addr name
 		config state
@@ -381,6 +381,7 @@ def ofp_flow_mod(message, offset):
 		idle_timeout,hard_timeout,priority,
 		buffer_id,out_port,out_group,flags) = _unpack("QQBB3H3IH2x", message, cursor)
 	match = ofp_match(message, cursor)
+	print(offset,header)
 	instructions = _list_fetch(message, cursor, offset+header.length, ofp_instruction_)
 	
 	return namedtuple("ofp_flow_mod",
@@ -567,6 +568,7 @@ def ofp_multipart_reply(message, offset=0):
 def _list_fetch(message, cursor, limit, fetcher):
 	ret = []
 	while cursor.offset < limit:
+		print(cursor.offset, limit)
 		ret.append(fetcher(message, cursor))
 	
 	assert cursor.offset == limit

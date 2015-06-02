@@ -86,6 +86,9 @@ def ofp_(header, data, type=None):
 # 7.2.1
 def ofp_port(port_no, hw_addr, name, config, state, 
 		curr, advertised, supported, peer, curr_speed, max_speed):
+	if isinstance(name, str):
+		name = name.encode("UTF-8")
+	
 	assert isinstance(hw_addr, bytes) and _len(hw_addr)==6
 	assert isinstance(name, bytes) and _len(name)<=16
 	
