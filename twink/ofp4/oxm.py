@@ -37,6 +37,51 @@ ofp_ipv6exthdr_flags = type("ofp_ipv6exthdr_flags", (_enum_base,), {
 	"bitshifts": "NONEXT ESP AUTH DEST FRAG ROUTER HOP UNREP UNSEQ"
 	})(globals())
 
+STRATOS_EXPERIMENTER_ID = 0xFF00E04D
+
+stratos_oxm_fields = type("stratos_oxm_fields", (_enum_base,), {
+	"prefix": "STRATOS_OXM_FIELD",
+	"numbers": "BASIC RADIOTAP"})(globals())
+
+stratos_basic_exp = type("stratos_basic_exp", (_enum_base,), {
+	"prefix": "STROXM_BASIC",
+	"numbers": '''UNKNOWN
+		DOT11
+		DOT11_FRAME_CTRL
+		DOT11_ADDR1
+		DOT11_ADDR2
+		DOT11_ADDR3
+		DOT11_ADDR4
+		DOT11_SSID
+		DOT11_ACTION_CATEGORY
+		DOT11_PUBLIC_ACTION
+		DOT11_TAG
+		DOT11_TAG_VENDOR'''
+	})(globals())
+
+stratos_radiotap_exp = type("stratos_radiotap_exp", (_enum_base,), {
+	"prefix": "STROXM_RADIOTAP",
+	"numbers": {'''TSFT
+			FLAGS
+			RATE
+			CHANNEL
+			FHSS
+			DBM_ANTSIGNAL
+			DBM_ANTNOISE
+			LOCK_QUALITY
+			TX_ATTENUATION
+			DB_TX_ATTENUATION
+			DBM_TX_POWER
+			ANTENNA
+			DB_ANTSIGNAL
+			DB_ANTNOISE
+			RX_FLAGS
+			TX_FLAGS
+			RTS_RETRIES
+			DATA_RETRIES
+		''': 0, "MCS AMPDU_STATUS":19}
+	})(globals())
+
 def _bits(oxm_field):
 	if oxm_field in (OXM_OF_IN_PORT, OXM_OF_IN_PHY_PORT):
 		bits = "I"
@@ -60,25 +105,81 @@ def _bits(oxm_field):
 		bits = "B"
 	return bits
 
+def _stratos_basic_bits(etype):
+	if etype in (STROXM_BASIC_DOT11, STROXM_BASIC_DOT11_PUBLIC_ACTION, STROXM_BASIC_DOT11_TAG):
+		return "B"
+
+def _stratos_radiotap_bits(etype):
+	if etype in (STROXM_RADIOTAP_FLAGS, STROXM_RADIOTAP_RATE, STROXM_RADIOTAP_ANTENNA,
+			STROXM_RADIOTAP_DB_ANTSIGNAL, STROXM_RADIOTAP_DB_ANTNOISE,
+			STROXM_RADIOTAP_RTS_RETRIES, STROXM_RADIOTAP_DATA_RETRIES):
+		return "B"
+	elif etype in (STROXM_RADIOTAP_DBM_ANTSIGNAL, STROXM_RADIOTAP_DBM_ANTNOISE, STROXM_RADIOTAP_DBM_TX_POWER):
+		return "b"
+	elif etype in (STROXM_RADIOTAP_LOCK_QUALITY, STROXM_RADIOTAP_RX_FLAGS, STROXM_RADIOTAP_TX_FLAGS,
+			STROXM_RADIOTAP_TX_ATTENUATION, STROXM_RADIOTAP_DB_TX_ATTENUATION):
+		return "H"
+	elif etype in (STROXM_RADIOTAP_TSFT,):
+		return "Q"
+
+oxm = namedtuple("oxm", "oxm_class oxm_field oxm_hasmask oxm_length oxm_value oxm_mask")
+stratos = namedtuple("stratos", "oxm_class oxm_field oxm_hasmask oxm_length exp exp_type value mask")
+
 def parse(message, offset=0):
 	(oxm_class, p, oxm_length) = struct.unpack_from("!HBB", message, offset)
 	oxm_field = p>>1
 	oxm_hasmask = p&1
 	offset += 4
 	
-	if oxm_class != OFPXMC_OPENFLOW_BASIC:
-		raise ValueError("only OFPXMC_OPENFLOW_BASIC is supported")
-	
-	bits = _bits(oxm_field)
-	
-	if oxm_hasmask:
-		assert oxm_length == struct.calcsize("!"+bits*2)
-		return namedtuple("oxm", "oxm_class oxm_field oxm_hasmask oxm_length oxm_value oxm_mask")(
-			oxm_class, oxm_field, oxm_hasmask, oxm_length, *struct.unpack_from("!"+bits*2, message, offset))
+	if oxm_class == OFPXMC_OPENFLOW_BASIC:
+		bits = _bits(oxm_field)
+		
+		if oxm_hasmask:
+			assert oxm_length == struct.calcsize("!"+bits*2)
+			return oxm(oxm_class, oxm_field, oxm_hasmask, oxm_length, *struct.unpack_from("!"+bits*2, message, offset))
+		else:
+			assert oxm_length == struct.calcsize(bits)
+			return oxm(oxm_class, oxm_field, oxm_hasmask, oxm_length, struct.unpack_from("!"+bits, message, offset)[0], None)
+	elif oxm_class == OFPXMC_EXPERIMENTER:
+		exp = struct.unpack_from("!I", message, offset)[0]
+		offset += 4
+		if exp == STRATOS_EXPERIMENTER_ID:
+			exp_type = struct.unpack_from("!H", message, offset)[0]
+			offset += 2
+			
+			packs = None
+			if oxm_field == STRATOS_OXM_FIELD_BASIC:
+				bits = _stratos_basic_bits(exp_type)
+				if bits:
+					if oxm_hasmask:
+						packs = "!"+bits*2
+					else:
+						packs = "!"+bits
+			elif oxm_field == STRATOS_OXM_FIELD_RADIOTAP:
+				bits = _stratos_radiotap_bits(exp_type)
+				if bits:
+					if oxm_hasmask:
+						packs = "<"+bits*2
+					else:
+						packs = "<"+bits
+			
+			if packs is None:
+				if oxm_hasmask:
+					bits = "%ds" % (oxm_length - 6)/2
+					packs = "!"+bits * 2
+				else:
+					bits = "%ds" % (oxm_length - 6)
+					packs = "!"+bits
+			
+			vs = list(struct.unpack_from(packs, message, offset))
+			if not oxm_hasmask:
+				vs.append(None)
+			
+			return stratos(oxm_class, oxm_field, oxm_hasmask, oxm_length, exp, exp_type, *vs)
+		else:
+			raise ValueError("unsupported Experimenter ID")
 	else:
-		assert oxm_length == struct.calcsize(bits)
-		return namedtuple("oxm", "oxm_class oxm_field oxm_hasmask oxm_length oxm_value")(
-			oxm_class, oxm_field, oxm_hasmask, oxm_length, *struct.unpack_from("!"+bits, message, offset))
+		raise ValueError("only OFPXMC_OPENFLOW_BASIC or some OFPXMC_EXPERIMENTER is supported")
 
 def parse_list(message, offset=0):
 	ret = []
@@ -91,10 +192,8 @@ def parse_list(message, offset=0):
 def build(oxm_class, oxm_field, oxm_hasmask, oxm_length, oxm_value, oxm_mask=None):
 	if oxm_class is None:
 		oxm_class = OFPXMC_OPENFLOW_BASIC
-	assert oxm_class == OFPXMC_OPENFLOW_BASIC
 	
-	bits = _bits(oxm_field)
-	
+	# convert to pack integer
 	if oxm_hasmask:
 		oxm_hasmask = 1
 	else:
@@ -106,9 +205,52 @@ def build(oxm_class, oxm_field, oxm_hasmask, oxm_length, oxm_value, oxm_mask=Non
 	else:
 		oxm_hasmask = 1
 	
+	bits = _bits(oxm_field)
 	if oxm_hasmask:
 		oxm_length = struct.calcsize("!"+bits*2)
 		return struct.pack("!HBB"+bits*2, oxm_class, (oxm_field<<1)+oxm_hasmask, oxm_length, oxm_value, oxm_mask)
 	else:
 		oxm_length = struct.calcsize("!"+bits)
 		return struct.pack("!HBB"+bits, oxm_class, (oxm_field<<1)+oxm_hasmask, oxm_length, oxm_value)
+
+def build_stratos(oxm_class, oxm_field, oxm_hasmask, oxm_length, exp, exp_type, oxm_value, oxm_mask=None):
+	if oxm_class is None:
+		oxm_class = OFPXMC_EXPERIMENTER
+	
+	if exp == STRATOS_EXPERIMENTER_ID:
+		packs = None
+		if oxm_field == STRATOS_OXM_FIELD_BASIC:
+			bits = _stratos_basic_bits(exp_type)
+			if oxm_hasmask:
+				packs = "!"+bits
+			else:
+				packs = "!"+bits*2
+		elif oxm_field == STRATOS_OXM_FIELD_RADIOTAP:
+			bits = _stratos_radiotap_bits(exp_type)
+			if oxm_hasmask:
+				packs = "<"+bits
+			else:
+				packs = "<"+bits*2
+		else:
+			raise ValueError("unsupported stratos field")
+		
+		if packs:
+			if oxm_hasmask:
+				vm = struct.pack(packs, oxm_value, oxm_mask)
+			else:
+				vm = struct.pack(packs, oxm_value)
+		else:
+			if oxm_hasmask:
+				vm = oxm_value
+			else:
+				vm = oxm_value + oxm_mask
+		
+		if oxm_mask:
+			oxm_mask = 1
+		else:
+			oxm_mask = 0
+		
+		oxm_length = 6 + len(vm)
+		return struct.pack("!HBBIH", oxm_class, (oxm_field<<1)+oxm_hasmask, oxm_length, exp, exp_type)+vm
+	else:
+		raise ValueError("unsupported experimenter")
