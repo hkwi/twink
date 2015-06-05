@@ -1,6 +1,4 @@
 import twink
-import threading
-import socket
 import logging
 import signal
 import binascii
@@ -25,7 +23,9 @@ class BasicTestCase(unittest.TestCase):
 		serv_thread = twink.sched.spawn(serv.start)
 		
 		signal_stop = serv.stop
+		ch = None
 		try:
+			socket = twink.sched.socket
 			s = socket.create_connection(serv.server_address[:2])
 			ch = type("Client", (twink.OpenflowChannel, twink.LoggingChannel), {"accept_versions":[4,]})()
 			ch.attach(s)
@@ -36,9 +36,10 @@ class BasicTestCase(unittest.TestCase):
 		except:
 			logging.error("client error", exc_info=True)
 		finally:
-			ch.close()
+			if ch is not None:
+				ch.close()
 		
-		threading.Event().wait(0.1) # wait for serv.loop reads the buffer
+		twink.sched.Event().wait(0.1) # wait for serv.loop reads the buffer
 		serv.stop()
 		serv_thread.join()
 
@@ -50,7 +51,7 @@ class BasicTestCase(unittest.TestCase):
 		serv.channel_cls = type("Server",(twink.ControllerChannel, twink.AutoEchoChannel, twink.LoggingChannel),{
 				"accept_versions":[4,],
 				"handle":staticmethod(dummy_handle)})
-		serv_thread = threading.Thread(target=serv.serve_forever)
+		serv_thread = twink.sched.Thread(target=serv.serve_forever)
 		serv_thread.start()
 		
 		signal_stop = serv.shutdown
@@ -77,6 +78,7 @@ class BasicTestCase(unittest.TestCase):
 
 
 	def wtest_interactive(self):
+		socket = twink.sched.socket
 		b = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		b.bind(("localhost",0))
 		b.listen(1)
@@ -113,5 +115,8 @@ class BasicTestCase(unittest.TestCase):
 		b.close()
 
 if __name__=="__main__":
+	import os
+	if os.environ.get("USE_GEVENT"):
+		twink.use_gevent()
 	logging.basicConfig(level=logging.WARN)
 	unittest.main()

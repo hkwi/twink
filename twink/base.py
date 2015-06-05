@@ -855,7 +855,7 @@ class SyncChannel(ParallelChannel):
 		with self.syncs_lock:
 			self.syncs[x.xid] = x
 		self.send(message, **kwargs)
-		x.ev.wait(timeout=self.timeout)
+		x.ev.wait(timeout=kwargs.get("timeout", 10))
 		with self.syncs_lock:
 			self.syncs.pop(x.xid)
 		return x.data
