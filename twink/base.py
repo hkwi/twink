@@ -168,25 +168,28 @@ class LoggingChannel(OpenflowBaseChannel):
 	channel_log_name = "channel"
 	send_log_name = "send"
 	recv_log_name = "recv"
+	remote = ""
 	
 	def __init__(self, *args, **kwargs):
 		super(LoggingChannel, self).__init__(*args, **kwargs)
-		logging.getLogger(self.channel_log_name).info("%s connect" % self)
+		if self.remote_address:
+			self.remote = " from %s" % self.remote_address[0]
+		logging.getLogger(self.channel_log_name).info("%s connect%s" % (self, self.remote))
 	
 	def send(self, message, **kwargs):
-		logging.getLogger(self.send_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
+		logging.getLogger(self.send_log_name).debug("%s %s" % (self, binascii.b2a_hex(message)))
 		return super(LoggingChannel, self).send(message, **kwargs)
 	
 	def recv(self):
 		message = super(LoggingChannel, self).recv()
 		if message: # ignore b"" and None
-			logging.getLogger(self.recv_log_name).info("%s %s" % (self, binascii.b2a_hex(message)))
+			logging.getLogger(self.recv_log_name).debug("%s %s" % (self, binascii.b2a_hex(message)))
 		return message
 	
 	def close(self):
 		if not self.closed:
 			super(LoggingChannel, self).close()
-			logging.getLogger(self.channel_log_name).info("%s close" % self)
+			logging.getLogger(self.channel_log_name).info("%s close%s" % (self, self.remote))
 
 
 class OpenflowChannel(OpenflowBaseChannel):
@@ -988,26 +991,27 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 	
 	def _update_port(self, reason, port):
 		with self._ports_lock:
-			hit = [x for x in self._ports if x[0]==port[0]] # check with port_no(0)
+			ports = list(self._ports)
+			hit = [x for x in ports if x[0]==port[0]] # check with port_no(0)
 			if reason==0: # ADD
 				if self._ports_init.is_set():
 					assert not hit
-				self._ports.append(port)
+				ports.append(port)
 				
 				s = self._attach.get(port.port_no, self._attach.get(port.name))
 				if s:
-					s.set()
+					s.set(port)
 					self._attach.pop(s)
 			elif reason==1: # DELETE
 				if self._ports_init.is_set():
 					assert hit
 				if hit:
 					assert len(hit) == 1
-					self._ports.remove(hit.pop())
+					ports.remove(hit.pop())
 				
 				s = self._detach.get(port.port_no, self._detach.get(port.name))
 				if s:
-					s.set()
+					s.set(port)
 					self._detach.pop(s)
 			elif reason==2: # MODIFY
 				if self._ports_init.is_set():
@@ -1015,13 +1019,14 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				if hit:
 					assert len(hit) == 1
 					old = hit.pop()
-					idx = self._ports.index(old)
-					self._ports.remove(old)
-					self._ports.insert(idx, port)
+					idx = ports.index(old)
+					ports.remove(old)
+					ports.insert(idx, port)
 				else:
-					self._ports.append(port)
+					ports.append(port)
 			else:
 				assert False, "unknown reason %d" % reason
+			self._ports = ports
 	
 	@property
 	def ports(self):
@@ -1044,7 +1049,6 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 	
 	def _ports_replace(self, new_ports):
 		old_ports = self._ports
-		self._ports = new_ports
 		
 		old_nums = set([p.port_no for p in old_ports])
 		old_names = set([p.name for p in old_ports])
@@ -1056,13 +1060,13 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				with self._ports_lock:
 					s = self._detach.get(port.port_no)
 					if s:
-						s.set()
+						s.set(port)
 						self._detach.pop(s)
 			if port.name in old_names-new_names:
 				with self._ports_lock:
 					s = self._detach.get(port.name)
 					if s:
-						s.set()
+						s.set(port)
 						self._detach.pop(s)
 		
 		for port in new_ports:
@@ -1070,14 +1074,16 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				with self._ports_lock:
 					s = self._attach.get(port.port_no)
 					if s:
-						s.set()
+						s.set(port)
 						self._attach.pop(s)
 			if port.name in new_names-old_names:
 				with self._ports_lock:
 					s = self._attach.get(port.name)
 					if s:
-						s.set()
+						s.set(port)
 						self._attach.pop(s)
+		
+		self._ports = new_ports
 	
 	def close(self):
 		self._ports_init.set() # unlock the event

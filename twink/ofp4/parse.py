@@ -381,7 +381,6 @@ def ofp_flow_mod(message, offset):
 		idle_timeout,hard_timeout,priority,
 		buffer_id,out_port,out_group,flags) = _unpack("QQBB3H3IH2x", message, cursor)
 	match = ofp_match(message, cursor)
-	print(offset,header)
 	instructions = _list_fetch(message, cursor, offset+header.length, ofp_instruction_)
 	
 	return namedtuple("ofp_flow_mod",
@@ -568,7 +567,6 @@ def ofp_multipart_reply(message, offset=0):
 def _list_fetch(message, cursor, limit, fetcher):
 	ret = []
 	while cursor.offset < limit:
-		print(cursor.offset, limit)
 		ret.append(fetcher(message, cursor))
 	
 	assert cursor.offset == limit
