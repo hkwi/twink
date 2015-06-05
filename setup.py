@@ -1,7 +1,7 @@
 from distutils.core import setup
 
 setup(name='twink',
-        version='0.1',
+        version='0.2',
         description='Openflow library',
         author='Hiroaki Kawai',
         author_email='hiroaki.kawai@gmail.com',
