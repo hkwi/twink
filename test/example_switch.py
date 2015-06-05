@@ -1,6 +1,5 @@
 import binascii
 import twink
-import twink.gevent
 from twink.ofp4 import *
 import twink.ofp4.parse as p
 import twink.ofp4.build as b
@@ -33,14 +32,14 @@ def switch_proc(message, channel):
 ##
 ## TCP server openflow switch
 ##
-serv = twink.gevent.ChannelStreamServer(("0.0.0.0", 6653), spawn=100)
+serv = twink.StreamServer(("0.0.0.0", 6653), spawn=100)
 serv.channel_cls = type("Switch", (
 	twink.AutoEchoChannel,
 	twink.LoggingChannel), {
 		"accept_versions": [4,],
 		"handle": staticmethod(switch_proc)
 	})
-serv.serve_forever()
+twink.serve_forever(serv)
 
 ##
 ## normal openflow switch
