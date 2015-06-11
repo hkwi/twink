@@ -959,7 +959,7 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 					offset = 16
 					while offset < length:
 						port = list(struct.unpack_from(ofp_port, message, offset=offset))
-						port[2] = port[2].partition('\0')[0]
+						port[2] = port[2].partition(b'\0')[0]
 						ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 						offset += struct.calcsize(ofp_port)
 				
@@ -975,7 +975,7 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				ports = []
 				while offset < length:
 					port = list(struct.unpack_from(ofp_port, message, offset=offset))
-					port[2] = port[2].partition('\0')[0]
+					port[2] = port[2].partition(b'\0')[0]
 					ports.append(namedtuple("ofp_port", ofp_port_names)(*port))
 					offset += struct.calcsize(ofp_port)
 				with self._ports_lock:
@@ -985,7 +985,7 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 				p = struct.unpack_from("!B7x"+ofp_port[1:], message, offset=8)
 				reason = p[0]
 				port = list(p[1:])
-				port[2] = port[2].partition('\0')[0]
+				port[2] = port[2].partition(b'\0')[0]
 				self._update_port(reason, namedtuple("ofp_port", ofp_port_names)(*port))
 		return message
 	

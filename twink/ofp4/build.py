@@ -27,7 +27,7 @@ def _unpack(fmt, message, offset):
 	return struct.unpack_from(fmt, message, offset)
 
 def _align(length):
-	return (length+7)/8*8
+	return (length+7)//8*8
 
 # 7.1
 def ofp_header(version, type, length, xid):
