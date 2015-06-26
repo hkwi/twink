@@ -545,11 +545,9 @@ def ofp_meter_mod(header, command, flags, meter_id, bands):
 	else:
 		raise ValueError(bands)
 	
-	msg = _pack("8sHHI",
-		_obj(header),
-		command,
-		flags,
-		meter_id) + bands
+	msg = ofp_(header,
+		_pack("HHI", command, flags, meter_id) + bands,
+		OFPT_METER_MOD)
 	return msg
 
 def ofp_meter_band_header(type, len, rate, burst_size):
