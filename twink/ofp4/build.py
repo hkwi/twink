@@ -6,6 +6,11 @@ from . import *
 _len = len
 _type = type
 
+try:
+	long(0)
+except:
+	long = int
+
 default_xid = lambda: long(random.random()*0xFFFFFFFF)
 
 def _obj(obj):
