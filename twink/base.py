@@ -872,7 +872,7 @@ class SyncChannel(ParallelChannel):
 	
 	def close(self):
 		if self.syncs is not None:
-			for k,x in self.syncs.items():
+			for k,x in tuple(self.syncs.items()):
 				x.data = ""
 				x.ev.set()
 		super(SyncChannel, self).close()
