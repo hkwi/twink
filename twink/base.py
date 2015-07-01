@@ -9,11 +9,24 @@ import weakref
 import datetime
 from collections import namedtuple
 
-from . import sched_basic as sched
-def use_gevent():
-	global sched
-	from . import sched_gevent as sched
 
+_use_gevent = False
+def use_gevent():
+	_use_gevent = True
+
+class _sched_proxy(object):
+	def __getattr__(self, name):
+		_sched = None
+		if _use_gevent:
+			from . import sched_gevent as _sched
+		else:
+			from . import sched_basic as _sched
+		
+		if name in "subprocess socket Queue Lock Event spawn serve_forever".split():
+			return getattr(_sched, name)
+		raise AttributeError("No such attribute")
+
+sched = _sched_proxy()
 
 def default_wrapper(func):
 	def wrap(*args, **kwargs):
