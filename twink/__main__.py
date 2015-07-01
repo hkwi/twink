@@ -14,7 +14,7 @@ if __name__ == "__main__":
 	
 	serv = StreamServer(("0.0.0.0", 6653))
 	serv.channel_cls = type("TcpChannel",(ControllerChannel, AutoEchoChannel, LoggingChannel),{"accept_versions":[4,], "handle":staticmethod(handle)})
-	serve_forever(serv)
+	sched.serve_forever(serv)
 
 # serv = ChannelUDPServer(("0.0.0.0", 6653), DatagramRequestHandler)
 # serv.channel_cls = type("UdpChannel",(ControllerChannel, LoggingChannel),{"accept_versions":[4,]})
