@@ -18,10 +18,9 @@ class _sched_proxy(object):
 	def __getattr__(self, name):
 		_sched = None
 		if _use_gevent:
-			from . import sched_gevent as _sched
+			_sched = __import__("sched_gevent", globals(), level=1)
 		else:
-			from . import sched_basic as _sched
-		
+			_sched = __import__("sched_gevent", globals(), level=1)
 		if name in "subprocess socket Queue Lock Event spawn serve_forever".split():
 			return getattr(_sched, name)
 		raise AttributeError("No such attribute")
