@@ -3,20 +3,10 @@ import gevent.subprocess as subprocess
 import gevent.socket as socket
 from gevent.queue import Queue
 from gevent.event import Event
+from gevent.lock import Semaphore as Lock
 from gevent import spawn
 
 __all__="subprocess socket Queue Lock Event spawn serve_forever".split()
-
-class Lock(object):
-	def acquire(self, blocking=1):
-		return True
-	
-	def noop(self, *args, **kwargs):
-		pass
-	
-	release = noop
-	__enter__ = noop
-	__exit__ = noop
 
 
 def serve_forever(*servers, **opts):
