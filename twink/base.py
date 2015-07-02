@@ -1069,31 +1069,27 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 		
 		for port in old_ports:
 			if port.port_no in old_nums-new_nums:
-				with self._ports_lock:
-					s = self._detach.get(port.port_no)
-					if s:
-						s.set(port)
-						self._detach.pop(s)
+				s = self._detach.get(port.port_no)
+				if s:
+					s.set(port)
+					self._detach.pop(s)
 			if port.name in old_names-new_names:
-				with self._ports_lock:
-					s = self._detach.get(port.name)
-					if s:
-						s.set(port)
-						self._detach.pop(s)
+				s = self._detach.get(port.name)
+				if s:
+					s.set(port)
+					self._detach.pop(s)
 		
 		for port in new_ports:
 			if port.port_no in new_nums-old_nums:
-				with self._ports_lock:
-					s = self._attach.get(port.port_no)
-					if s:
-						s.set(port)
-						self._attach.pop(s)
+				s = self._attach.get(port.port_no)
+				if s:
+					s.set(port)
+					self._attach.pop(s)
 			if port.name in new_names-old_names:
-				with self._ports_lock:
-					s = self._attach.get(port.name)
-					if s:
-						s.set(port)
-						self._attach.pop(s)
+				s = self._attach.get(port.name)
+				if s:
+					s.set(port)
+					self._attach.pop(s)
 		
 		self._ports = new_ports
 	
