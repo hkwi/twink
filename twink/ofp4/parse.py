@@ -629,7 +629,7 @@ def ofp_aggregate_stats_reply(message, offset):
 
 # 7.3.5.4
 def ofp_table_stats(message, offset):
-	return namedtuple("ofp_table_stats", "table_id,out_port,out_group,cookie,cookie_mask")(
+	return namedtuple("ofp_table_stats", "table_id,active_count,lookup_count,matched_count")(
 		*_unpack("B3xIQQ", message, offset))
 
 # 7.3.5.5.1
