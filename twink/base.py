@@ -629,9 +629,14 @@ class StreamServer(object):
 					s = self.sock.accept()
 				except sched.socket.timeout:
 					continue
-			
-				ch = self.channel_cls(socket=s[0], remote_address=s[1], read_wrap=self.read_wrap)
-				ch.start()
+				try:
+					ch = self.channel_cls(socket=s[0], remote_address=s[1], read_wrap=self.read_wrap)
+					ch.start()
+				except Exception as e:
+					logging.getLogger(__name__).error("Channel setup failed for %s %s" % (s[1], e), exc_info=True)
+					s[0].close()
+					continue
+				
 				sched.spawn(self._loop_runner, ch)
 		finally:
 			self.sock.close()
