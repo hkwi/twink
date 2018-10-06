@@ -13,6 +13,7 @@ from collections import namedtuple
 
 _use_gevent = False
 def use_gevent():
+	global _use_gevent
 	_use_gevent = True
 
 class _sched_proxy(object):
