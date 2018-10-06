@@ -373,12 +373,12 @@ class Chunk(WeakCallbackCaller):
 class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 	datapath = None
 	auxiliary = None
-	cbref = None
 	
 	def __init__(self, *args, **kwargs):
 		super(ControllerChannel, self).__init__(*args, **kwargs)
 		self.seq_lock = sched.Lock()
 		self.seq = []
+		self.cbfunc = lambda msg, ch: super(ControllerChannel, self).handle_proxy(self.handle)(msg, ch)
 	
 	def send(self, message, **kwargs):
 		with self.seq_lock:
@@ -387,7 +387,7 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 	def locked_send(self, message, **kwargs):
 		message_handler = kwargs.get("callback") # callable object
 		if message_handler is None:
-			pass
+			message_handler = self.cbfunc
 		else:
 			assert isinstance(message_handler, object)
 			assert callable(message_handler)
@@ -412,11 +412,16 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 				self.seq.append(Chunk(message_handler))
 			else:
 				assert False, "seq element must be Chunk or Barrier"
-		else:
-			if self.callback != message_handler:
-				self.seq.append(Chunk(message_handler))
-			if message_handler:
-				self.cbfunc = weakref.ref(message_handler)
+		elif self.cbfunc != message_handler:
+			bxid = hms_xid()
+			if self.version==1:
+				msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
+			else:
+				msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
+			
+			self.seq.append(Barrier(bxid))
+			self.seq.append(Chunk(message_handler))
+			super(ControllerChannel, self).send(msg)
 		
 		super(ControllerChannel, self).send(message)
 	
@@ -461,11 +466,10 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 						if isinstance(e, Chunk):
 							if e.callback:
 								return e.callback(message, self)
-			
-			if self.callback:
-				return self.callback(message, self)
-			else:
-				return super(ControllerChannel, self).handle_proxy(handle)(message, channel)
+						else:
+							return self.cbfunc(message, channel)
+				else:
+					return self.cbfunc(message, channel)
 			
 			logging.getLogger(__name__).warn("No callback found for handling message %s" % binascii.b2a_hex(message))
 		return intercept
