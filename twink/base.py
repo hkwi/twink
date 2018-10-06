@@ -394,10 +394,6 @@ class ControllerChannel(OpenflowServerChannel):
 		self.seq = []
 	
 	def send(self, message, **kwargs):
-		with self.seq_lock:
-			return self.locked_send(message, **kwargs)
-	
-	def locked_send(self, message, **kwargs):
 		callback = kwargs.get("callback") # callable object
 		if callback is None:
 			callback = self.callback
@@ -405,37 +401,39 @@ class ControllerChannel(OpenflowServerChannel):
 			assert isinstance(callback, object)
 			assert callable(callback)
 		
-		(version, oftype, length, xid) = parse_ofp_header(message)
-		if (oftype==18 and version==1) or (oftype==20 and version!=1): # OFPT_BARRIER_REQUEST
-			self.seq.append(Barrier(xid, callback))
-		elif self.seq:
-			seq_last = self.seq[-1]
-			if isinstance(seq_last, Chunk):
-				if seq_last.id != id(callback):
-					bxid = hms_xid()
-					if self.version==1:
-						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
-					else:
-						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
-					
-					self.seq.append(Barrier(bxid))
+		bmsg = None
+		with self.seq_lock:
+			(version, oftype, length, xid) = parse_ofp_header(message)
+			if (oftype==18 and version==1) or (oftype==20 and version!=1): # OFPT_BARRIER_REQUEST
+				self.seq.append(Barrier(xid, callback))
+			elif self.seq:
+				seq_last = self.seq[-1]
+				if isinstance(seq_last, Chunk):
+					if seq_last.id != id(callback):
+						bxid = hms_xid()
+						if self.version==1:
+							bmsg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
+						else:
+							bmsg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
+						
+						self.seq.append(Barrier(bxid))
+						self.seq.append(Chunk(callback))
+				elif isinstance(seq_last, Barrier):
 					self.seq.append(Chunk(callback))
-					super(ControllerChannel, self).send(msg)
-			elif isinstance(seq_last, Barrier):
+				else:
+					assert False, "seq element must be Chunk or Barrier"
+			elif self.callback != callback:
+				bxid = hms_xid()
+				if self.version==1:
+					bmsg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
+				else:
+					bmsg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
+				
+				self.seq.append(Barrier(bxid))
 				self.seq.append(Chunk(callback))
-			else:
-				assert False, "seq element must be Chunk or Barrier"
-		elif self.callback != callback:
-			bxid = hms_xid()
-			if self.version==1:
-				msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
-			else:
-				msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
-			
-			self.seq.append(Barrier(bxid))
-			self.seq.append(Chunk(callback))
-			super(ControllerChannel, self).send(msg)
 		
+		if bmsg:
+			super(ControllerChannel, self).send(msg)
 		super(ControllerChannel, self).send(message)
 	
 	def recv(self):
@@ -460,6 +458,7 @@ class ControllerChannel(OpenflowServerChannel):
 				# bypass method call for async message
 				return super(ControllerChannel, self).handle_proxy(self.handle_async)(message, channel)
 			
+			callback = None
 			with self.seq_lock:
 				if self.seq:
 					if (oftype==19 and version==1) or (oftype==21 and version!=1): # is barrier
@@ -468,9 +467,7 @@ class ControllerChannel(OpenflowServerChannel):
 							if isinstance(e, Barrier):
 								if e.xid == xid:
 									self.seq = self.seq[self.seq.index(e)+1:]
-									if e.callback:
-										return e.callback(message, self)
-									return True
+									callback = e.callback
 								else:
 									assert False, "missing barrier(xid=%x) before barrier(xid=%x)" % (e.xid, xid)
 							elif isinstance(e, Chunk):
@@ -479,12 +476,13 @@ class ControllerChannel(OpenflowServerChannel):
 						assert False, "got unknown barrier xid=%x" % xid
 					elif isinstance(self.seq[0], Chunk):
 						callback = self.seq[0].callback
-						if callback:
-							return callback(message, self)
 					else:
-						return self.callback(message, self)
+						callback = self.callback
 				else:
-					return self.callback(message, self)
+					callback = self.callback
+			
+			if callback:
+				return callback(message, self)
 			
 			logging.getLogger(__name__).warn("No callback found for handling message %s" % binascii.b2a_hex(message))
 		return intercept
