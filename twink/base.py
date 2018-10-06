@@ -6,6 +6,7 @@ import os
 import struct
 import types
 import weakref
+import functools
 import datetime
 from collections import namedtuple
 
@@ -347,30 +348,42 @@ class AutoEchoChannel(OpenflowServerChannel):
 
 
 class WeakCallbackCaller(object):
+	id = None
+	cbref = None
+	meth = None
+	
+	def ref(self, callable):
+		self.id = id(callable)
+		try:
+			self.cbref = weakref.ref(callable.__self__)
+			self.meth = callable.__func__
+		except AttributeError:
+			self.cbref = weakref.ref(callable)
+	
 	@property
 	def callback(self):
 		if self.cbref:
-			return self.cbref()
+			r = self.cbref()
+			if r:
+				if self.meth:
+					return functools.partial(self.meth, r)
+				return r
 
 
 class Barrier(WeakCallbackCaller):
 	def __init__(self, xid, message_handler=None):
 		if message_handler:
-			self.cbref = weakref.ref(message_handler)
-		else:
-			self.cbref = None
+			self.ref(message_handler)
 		self.xid = xid
 
 
 class Chunk(WeakCallbackCaller):
 	def __init__(self, message_handler):
 		if message_handler:
-			self.cbref = weakref.ref(message_handler)
-		else:
-			self.cbref = None
+			self.ref(message_handler)
 
 
-class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
+class ControllerChannel(OpenflowServerChannel):
 	datapath = None
 	auxiliary = None
 	
@@ -378,27 +391,26 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 		super(ControllerChannel, self).__init__(*args, **kwargs)
 		self.seq_lock = sched.Lock()
 		self.seq = []
-		self.cbfunc = lambda msg, ch: super(ControllerChannel, self).handle_proxy(self.handle)(msg, ch)
 	
 	def send(self, message, **kwargs):
 		with self.seq_lock:
 			return self.locked_send(message, **kwargs)
 	
 	def locked_send(self, message, **kwargs):
-		message_handler = kwargs.get("callback") # callable object
-		if message_handler is None:
-			message_handler = self.cbfunc
+		callback = kwargs.get("callback") # callable object
+		if callback is None:
+			callback = self.callback
 		else:
-			assert isinstance(message_handler, object)
-			assert callable(message_handler)
+			assert isinstance(callback, object)
+			assert callable(callback)
 		
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if (oftype==18 and version==1) or (oftype==20 and version!=1): # OFPT_BARRIER_REQUEST
-			self.seq.append(Barrier(xid, message_handler))
+			self.seq.append(Barrier(xid, callback))
 		elif self.seq:
 			seq_last = self.seq[-1]
 			if isinstance(seq_last, Chunk):
-				if seq_last.callback != message_handler:
+				if seq_last.id != id(callback):
 					bxid = hms_xid()
 					if self.version==1:
 						msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
@@ -406,13 +418,13 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 						msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
 					
 					self.seq.append(Barrier(bxid))
-					self.seq.append(Chunk(message_handler))
+					self.seq.append(Chunk(callback))
 					super(ControllerChannel, self).send(msg)
 			elif isinstance(seq_last, Barrier):
-				self.seq.append(Chunk(message_handler))
+				self.seq.append(Chunk(callback))
 			else:
 				assert False, "seq element must be Chunk or Barrier"
-		elif self.cbfunc != message_handler:
+		elif self.callback != callback:
 			bxid = hms_xid()
 			if self.version==1:
 				msg = ofp_header_only(18, version=1, xid=bxid) # OFPT_BARRIER_REQUEST=18 (v1.0)
@@ -420,7 +432,7 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 				msg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
 			
 			self.seq.append(Barrier(bxid))
-			self.seq.append(Chunk(message_handler))
+			self.seq.append(Chunk(callback))
 			super(ControllerChannel, self).send(msg)
 		
 		super(ControllerChannel, self).send(message)
@@ -435,6 +447,9 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 				else:
 					(self.datapath,_1,_2,self.auxiliary) = struct.unpack_from("!QIBB", message, offset=8) # v1.3--v1.4
 		return message
+	
+	def callback(self, message, channel):
+		return super(ControllerChannel, self).handle_proxy(self.handle)(message, channel)
 	
 	def handle_proxy(self, handle):
 		def intercept(message, channel):
@@ -461,15 +476,14 @@ class ControllerChannel(OpenflowServerChannel, WeakCallbackCaller):
 								assert chunk_drop==False, "dropping multiple chunks at a time"
 								chunk_drop = True
 						assert False, "got unknown barrier xid=%x" % xid
+					elif isinstance(self.seq[0], Chunk):
+						callback = self.seq[0].callback
+						if callback:
+							return callback(message, self)
 					else:
-						e = self.seq[0]
-						if isinstance(e, Chunk):
-							if e.callback:
-								return e.callback(message, self)
-						else:
-							return self.cbfunc(message, channel)
+						return self.callback(message, self)
 				else:
-					return self.cbfunc(message, channel)
+					return self.callback(message, self)
 			
 			logging.getLogger(__name__).warn("No callback found for handling message %s" % binascii.b2a_hex(message))
 		return intercept
@@ -812,23 +826,18 @@ class ChildChannel(OpenflowChannel):
 		pass # ignore all messages
 
 
-class WeakCallback(object):
-	def __init__(self, channel):
-		self.channel = channel
-	
-	def __call__(self, message, upstream_channel):
-		self.channel.send(message)
-
-
 class JackinChildChannel(ChildChannel):
 	def __init__(self, *args, **kwargs):
 		super(JackinChildChannel, self).__init__(*args, **kwargs)
-		self.cbfunc = WeakCallback(self)
 	
 	def handle(self, message, channel):
 		(version, oftype, length, xid) = parse_ofp_header(message)
 		if oftype!=0:
-			self.parent.send(message, callback=self.cbfunc)
+			# send to upstream(parent), callback is downstream(self)
+			self.parent.send(message, callback=self.sendto_child)
+	
+	def sendto_child(self, message, upstream_channel):
+		self.send(message)
 	
 	def close(self):
 		self.cbfunc = None # unref
