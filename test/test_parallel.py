@@ -11,7 +11,7 @@ class TestChannel(twink.ControllerChannel):
 		self.handle = default_callback
 		super(TestChannel, self).__init__(**kwargs)
 
-class ParallelText(unittest.TestCase):
+class ParallelTest(unittest.TestCase):
 	def setUp(self):
 		self.sc, self.ss = socket.socketpair()
 	
@@ -31,33 +31,40 @@ class ParallelText(unittest.TestCase):
 		cb1 = lambda *a: results.append(("cb1", a))
 		cb2 = lambda *a: results.append(("cb2", a))
 		
-		echo1 = b.ofp_header(version=4,type=2,xid=1,length=8)
-		serv.send(echo1, callback=cb1)
-		assert sc.recv(1024)==echo1
-
-		echo2 = b.ofp_header(version=4,type=2,xid=2,length=8)
-		serv.send(echo2, callback=cb2)
+		echo = b.ofp_header(version=4,type=2,xid=1,length=8)
+		serv.send(echo, callback=cb1)
 		pkt = sc.recv(1024)
 		b1 = p.parse(pkt[:8])
 		assert b1.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo2 == pkt[8:]
+		assert echo == pkt[8:], pkt[8:]
 
-		echo1 = b.ofp_header(version=4,type=2,xid=3,length=8)
-		serv.send(echo1, callback=cb1)
+		echo = b.ofp_header(version=4,type=2,xid=2,length=8)
+		serv.send(echo, callback=cb2)
 		pkt = sc.recv(1024)
 		b2 = p.parse(pkt[:8])
 		assert b2.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo1 == pkt[8:]
+		assert echo == pkt[8:]
 
-		sc.send(b.ofp_header(version=4,type=3,xid=1,length=8))
+		echo = b.ofp_header(version=4,type=2,xid=3,length=8)
+		serv.send(echo, callback=cb1)
+		pkt = sc.recv(1024)
+		b3 = p.parse(pkt[:8])
+		assert b3.header.type == ofp4.OFPT_BARRIER_REQUEST
+		assert echo == pkt[8:]
+
 		sc.send(b.ofp_header(version=4,
 			type=ofp4.OFPT_BARRIER_REPLY,
 			xid=b1.header.xid,
 			length=8))
-		sc.send(b.ofp_header(version=4,type=3,xid=2,length=8))
+		sc.send(b.ofp_header(version=4,type=3,xid=1,length=8))
 		sc.send(b.ofp_header(version=4,
 			type=ofp4.OFPT_BARRIER_REPLY,
 			xid=b2.header.xid,
+			length=8))
+		sc.send(b.ofp_header(version=4,type=3,xid=2,length=8))
+		sc.send(b.ofp_header(version=4,
+			type=ofp4.OFPT_BARRIER_REPLY,
+			xid=b3.header.xid,
 			length=8))
 		sc.send(b.ofp_header(version=4,type=3,xid=3,length=8))
 		sc.close()
@@ -79,23 +86,24 @@ class ParallelText(unittest.TestCase):
 		cb1 = None
 		cb2 = lambda *a: results.append(("cb2", a))
 
-		echo1 = b.ofp_header(version=4,type=2,xid=1,length=8)
-		serv.send(echo1, callback=cb1)
-		assert sc.recv(1024)==echo1
+		echo = b.ofp_header(version=4,type=2,xid=1,length=8)
+		serv.send(echo, callback=cb1)
+		pkt = sc.recv(1024)
+		assert pkt==echo, pkt
 
-		echo2 = b.ofp_header(version=4,type=2,xid=2,length=8)
-		serv.send(echo2, callback=cb2)
+		echo = b.ofp_header(version=4,type=2,xid=2,length=8)
+		serv.send(echo, callback=cb2)
 		pkt = sc.recv(1024)
 		b1 = p.parse(pkt[:8])
 		assert b1.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo2 == pkt[8:]
+		assert echo == pkt[8:]
 
-		echo1 = b.ofp_header(version=4,type=2,xid=3,length=8)
-		serv.send(echo1, callback=cb1)
+		echo = b.ofp_header(version=4,type=2,xid=3,length=8)
+		serv.send(echo, callback=cb1)
 		pkt = sc.recv(1024)
 		b2 = p.parse(pkt[:8])
 		assert b2.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo1 == pkt[8:]
+		assert echo == pkt[8:]
 
 		sc.send(b.ofp_header(version=4,type=3,xid=1,length=8))
 		sc.send(b.ofp_header(version=4,
