@@ -39,7 +39,7 @@ serv.channel_cls = type("Switch", (
 		"accept_versions": [4,],
 		"handle": staticmethod(switch_proc)
 	})
-twink.serve_forever(serv)
+twink.sched.serve_forever(serv)
 
 ##
 ## normal openflow switch
