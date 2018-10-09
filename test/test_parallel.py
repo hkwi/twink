@@ -123,4 +123,7 @@ class ParallelTest(unittest.TestCase):
 			if p.parse(r[1][0]).header.type!=ofp4.OFPT_BARRIER_REPLY] == ["cb1", "cb2", "cb1"], results
 
 if __name__=="__main__":
+	import os
+	if os.environ.get("USE_GEVENT"):
+		twink.use_gevent()
 	unittest.main()
