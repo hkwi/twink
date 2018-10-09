@@ -90,12 +90,12 @@ class Channel(object):
 			if self.local_address is None:
 				self.local_address = self._socket.getsockname()
 			if hasattr(self._socket, "settimeout") and self._socket.gettimeout() == None:
-				self._socket.settimeout(0.5)
+				self._socket.settimeout(6)
 	
 	def attach(self, stream, **kwargs):
 		self._socket = stream
 		if hasattr(self._socket, "settimeout") and self._socket.gettimeout() == None:
-			self._socket.settimeout(0.5)
+			self._socket.settimeout(6)
 		self.remote_address = stream.getpeername()
 		self.local_address = stream.getsockname()
 	
@@ -530,7 +530,7 @@ class RateLimit(object):
 								running = True
 						
 						if running:
-							job.join(0.5)
+							job.join(3)
 						else:
 							chilren.pop(task)
 						
@@ -635,7 +635,7 @@ class StreamServer(object):
 	def start(self):
 		self.accepting = True
 		sock = self.sock
-		sock.settimeout(0.5)
+		sock.settimeout(6)
 		sock.listen(10)
 		sched.spawn(self.run)
 	
@@ -952,7 +952,7 @@ class PortMonitorChannel(ControllerChannel, ParallelChannel):
 	'''
 	def __init__(self, *args, **kwargs):
 		super(PortMonitorChannel, self).__init__(*args, **kwargs)
-		self.timeout = kwargs.get("timeout", 2.0)
+		self.timeout = kwargs.get("timeout", 6.0)
 		self._ports_lock = sched.Lock()
 		self._ports = []
 		self._ports_init = sched.Event()
