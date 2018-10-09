@@ -821,7 +821,11 @@ class ChildChannel(OpenflowChannel):
 	parent = None # must be set
 	
 	def send(self, message, **kwargs):
-		super(ChildChannel, self).send(message, **kwargs)
+		try:
+			super(ChildChannel, self).send(message, **kwargs)
+		except:
+			logging.getLogger(__name__).warn("child channel send error", exc_info=True)
+			self.close()
 	
 	def handle(self, message, channel):
 		pass # ignore all messages
