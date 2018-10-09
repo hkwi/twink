@@ -43,14 +43,14 @@ class ParallelTest(unittest.TestCase):
 		pkt = sc.recv(1024)
 		b2 = p.parse(pkt[:8])
 		assert b2.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo == pkt[8:]
+		assert echo == pkt[8:], pkt[8:]
 
 		echo = b.ofp_header(version=4,type=2,xid=3,length=8)
 		serv.send(echo, callback=cb1)
 		pkt = sc.recv(1024)
 		b3 = p.parse(pkt[:8])
 		assert b3.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo == pkt[8:]
+		assert echo == pkt[8:], pkt[8:]
 
 		sc.send(b.ofp_header(version=4,
 			type=ofp4.OFPT_BARRIER_REPLY,
@@ -96,14 +96,14 @@ class ParallelTest(unittest.TestCase):
 		pkt = sc.recv(1024)
 		b1 = p.parse(pkt[:8])
 		assert b1.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo == pkt[8:]
+		assert echo == pkt[8:], pkt[8:]
 
 		echo = b.ofp_header(version=4,type=2,xid=3,length=8)
 		serv.send(echo, callback=cb1)
 		pkt = sc.recv(1024)
 		b2 = p.parse(pkt[:8])
 		assert b2.header.type == ofp4.OFPT_BARRIER_REQUEST
-		assert echo == pkt[8:]
+		assert echo == pkt[8:], pkt[8:]
 
 		sc.send(b.ofp_header(version=4,type=3,xid=1,length=8))
 		sc.send(b.ofp_header(version=4,
@@ -119,8 +119,11 @@ class ParallelTest(unittest.TestCase):
 		sc.close()
 
 		serv.loop()
-		assert [r[0] for r in results] == ["cb1", "cb2", "cb1"]
+		assert [r[0] for r in results
+			if p.parse(r[1][0]).header.type!=ofp4.OFPT_BARRIER_REPLY] == ["cb1", "cb2", "cb1"], results
 
+	def test_child_close(self):
+		
 
 if __name__=="__main__":
 	unittest.main()

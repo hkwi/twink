@@ -372,7 +372,7 @@ class WeakCallbackCaller(object):
 
 
 class Barrier(WeakCallbackCaller):
-	def __init__(self, xid, message_handler=None):
+	def __init__(self, xid, message_handler):
 		if message_handler:
 			self.ref(message_handler)
 		self.xid = xid
@@ -416,7 +416,7 @@ class ControllerChannel(OpenflowServerChannel):
 						else:
 							bmsg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
 						
-						self.seq.append(Barrier(bxid))
+						self.seq.append(Barrier(bxid, self.callback))
 						self.seq.append(Chunk(callback))
 				elif isinstance(seq_last, Barrier):
 					self.seq.append(Chunk(callback))
@@ -429,11 +429,11 @@ class ControllerChannel(OpenflowServerChannel):
 				else:
 					bmsg = ofp_header_only(20, version=self.version, xid=bxid) # OFPT_BARRIER_REQUEST=20 (v1.1--v1.4)
 				
-				self.seq.append(Barrier(bxid))
+				self.seq.append(Barrier(bxid, self.callback))
 				self.seq.append(Chunk(callback))
 		
 		if bmsg:
-			super(ControllerChannel, self).send(msg)
+			super(ControllerChannel, self).send(bmsg)
 		super(ControllerChannel, self).send(message)
 	
 	def recv(self):
@@ -470,10 +470,12 @@ class ControllerChannel(OpenflowServerChannel):
 									callback = e.callback
 								else:
 									assert False, "missing barrier(xid=%x) before barrier(xid=%x)" % (e.xid, xid)
+								break
 							elif isinstance(e, Chunk):
 								assert chunk_drop==False, "dropping multiple chunks at a time"
 								chunk_drop = True
-						assert False, "got unknown barrier xid=%x" % xid
+						if callback is None:
+							assert False, "got unknown barrier xid=%x" % xid
 					elif isinstance(self.seq[0], Chunk):
 						callback = self.seq[0].callback
 					else:
@@ -839,7 +841,6 @@ class JackinChildChannel(ChildChannel):
 		self.send(message)
 	
 	def close(self):
-		self.cbfunc = None # unref
 		super(JackinChildChannel, self).close()
 
 
