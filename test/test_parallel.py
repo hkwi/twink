@@ -122,8 +122,5 @@ class ParallelTest(unittest.TestCase):
 		assert [r[0] for r in results
 			if p.parse(r[1][0]).header.type!=ofp4.OFPT_BARRIER_REPLY] == ["cb1", "cb2", "cb1"], results
 
-	def test_child_close(self):
-		
-
 if __name__=="__main__":
 	unittest.main()
