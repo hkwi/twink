@@ -1,6 +1,6 @@
 import unittest
 import socket
-from twink import OpenflowChannel
+from twink import OpenflowChannel, use_gevent
 from twink.ovs import *
 
 from twink.ofp4 import *
@@ -31,6 +31,9 @@ class OvsTestCase(unittest.TestCase):
 		assert v1msg[1] == 14
 
 if __name__=="__main__":
+	import os
+	if os.environ.get("USE_GEVENT"):
+		use_gevent()
 # 	import logging
 # 	logging.basicConfig(level=logging.DEBUG)
 	unittest.main()

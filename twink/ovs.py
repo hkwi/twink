@@ -1,10 +1,21 @@
 from __future__ import absolute_import
+import re
 import logging
 import struct
 from . import base
 
+named = tuple()
 try:
-	base.sched.subprocess.check_call(("ovs-ofctl", "-V"), stdout=base.sched.subprocess.PIPE)
+	# 50f96b10e1c87db9fbe4df297f9b2fea13436bc0 allows named ports,
+	# which requires dummy channel to respond port information
+	#
+	# new in Open vSwitch 2.8
+	out = base.sched.subprocess.check_output(["ovs-ofctl", "-V"])
+	m = re.search(r'\(Open vSwitch\) ([\d]+)\.([\d]+)\.', out.decode("UTF-8"))
+	if m:
+		major,minor = [int(n) for n in m.groups()]
+		if major>2 or (major==2 and minor>=8):
+			named = ("--no-names",) # rule2ofp does not support named access
 except OSError:
 	raise RuntimeError("ovs-ofctl not found in PATH")
 
@@ -31,6 +42,7 @@ def rule2ofp(*rules, **kwargs):
 			cmd = ("ovs-ofctl",
 				"-O", "OpenFlow1%d" % (version-1),
 				"add-flow",
+				)+named+(
 				"tcp:%s:%d" % serv.server_address,
 				rule)
 			base.sched.subprocess.check_output(cmd)
