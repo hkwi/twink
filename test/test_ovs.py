@@ -7,6 +7,7 @@ from twink.ofp4 import *
 import twink.ofp4.parse as p
 import twink.ofp4.build as b
 
+@unittest.skipUnless(ofctl, "ovs-ofctl not in PATH")
 class OvsTestCase(unittest.TestCase):
 	def test_add_flow(self):
 		converted = rule2ofp("in_port=1,actions=drop")[0]

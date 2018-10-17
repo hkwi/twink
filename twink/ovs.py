@@ -5,6 +5,7 @@ import struct
 from . import base
 
 named = tuple()
+ofctl = True
 try:
 	# 50f96b10e1c87db9fbe4df297f9b2fea13436bc0 allows named ports,
 	# which requires dummy channel to respond port information
@@ -17,9 +18,12 @@ try:
 		if major>2 or (major==2 and minor>=8):
 			named = ("--no-names",) # rule2ofp does not support named access
 except OSError:
-	raise RuntimeError("ovs-ofctl not found in PATH")
+	ofctl = False
 
 def rule2ofp(*rules, **kwargs):
+	if not ofctl:
+		raise RuntimeError("ovs-ofctl not found in PATH")
+	
 	version = kwargs.pop("version", 4)
 	results = []
 	def handle(msg, ch):
@@ -61,6 +65,9 @@ class OvsChannel(base.ControllerChannel, base.ParallelChannel):
 		return self.ofctl("mod-flows", flow, **kwargs)
 	
 	def ofctl(self, action, *args, **options):
+		if not ofctl:
+			raise RuntimeError("ovs-ofctl not found in PATH")
+		
 		starter, halt, addr = self.temp_server()
 		starter()
 		try:

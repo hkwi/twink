@@ -13,4 +13,5 @@ setup(name='twink',
         author_email='hiroaki.kawai@gmail.com',
         url='https://github.com/hkwi/twink/',
         packages=['twink','twink.ofp4','twink.ofp5'],
+        test_suite="test",
 )
