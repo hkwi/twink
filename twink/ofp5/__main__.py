@@ -35,9 +35,9 @@ assert action.port == OFPP_TABLE
 assert action.max_len == OFPCML_MAX
 
 msg = p.parse(b.ofp_flow_mod(None, 3, 0xFF, 0, OFPFC_ADD, 0, 300, 20, 45, OFPP_ANY, OFPG_ANY, 0, 7,
-	b.ofp_match(None, None, "".join([
+	b.ofp_match(None, None, b"".join([
 		oxm.build(None, oxm.OXM_OF_IN_PORT, None, None, 12),
-		oxm.build(None, oxm.OXM_OF_ETH_SRC, None, None, "\xff\xff\xff\xff\xff\xff")])),
+		oxm.build(None, oxm.OXM_OF_ETH_SRC, None, None, b"\xff\xff\xff\xff\xff\xff")])),
 	[ b.ofp_instruction_actions(OFPIT_APPLY_ACTIONS, None, [
 		b.ofp_action_push(OFPAT_PUSH_VLAN, None, 0x8100),
 		b.ofp_action_set_field(None, None, oxm.build(None, oxm.OXM_OF_VLAN_VID, None, None, 612)),
@@ -54,7 +54,7 @@ assert len(oxms) == 2
 assert oxms[0].oxm_field == oxm.OXM_OF_IN_PORT
 assert oxms[0].oxm_value == 12
 assert oxms[1].oxm_field == oxm.OXM_OF_ETH_SRC
-assert oxms[1].oxm_value == "\xff\xff\xff\xff\xff\xff"
+assert oxms[1].oxm_value == b"\xff\xff\xff\xff\xff\xff"
 assert len(msg.instructions) == 1
 inst = msg.instructions[0]
 assert inst.type == OFPIT_APPLY_ACTIONS

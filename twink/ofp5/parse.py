@@ -7,7 +7,7 @@ _len = len
 _type = type
 
 def _align(length):
-	return (length+7)/8*8
+	return (length+7)//8*8
 
 class _pos(object):
 	offset = 0
@@ -124,7 +124,7 @@ def ofp_port(message, offset):
 	offset = cursor.offset
 	
 	(port_no,length,hw_addr,name,config,state) = _unpack("IH2x6s2x16sII", message, cursor)
-	name = name.partition("\0")[0]
+	name = name.partition(b"\0")[0]
 	while cursor.offset < offset+length:
 		h = ofp_port_desc_prop_header(message, cursor.offset)
 		if h.type == OFPPDPT_ETHERNET:
@@ -756,7 +756,7 @@ def ofp_table_features(message, offset):
 	offset = cursor.offset
 	
 	(length,table_id,name,metadata_match,metadata_write,capabilities,max_entries) = _unpack("HB5x32sQQII", message, cursor)
-	name = name.partition('\0')[0]
+	name = name.partition(b'\0')[0]
 	properties = []
 	while cursor.offset < offset+length:
 		h = ofp_table_feature_prop_header(message, cursor.offset)
@@ -1437,7 +1437,7 @@ def ofp_hello(message, offset=0):
 		else:
 			raise ValueError("message offset=%d %s" % (cursor.offset, elem_header))
 	
-	assert cursor.offset == offset + header.length
+	assert cursor.offset == offset + header.length, (cursor.offset, offset, header.length)
 	return namedtuple("ofp_hello", "header elements")(header, elements)
 
 def ofp_hello_elem_header(message, offset):

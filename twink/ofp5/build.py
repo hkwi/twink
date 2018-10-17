@@ -6,10 +6,15 @@ from . import *
 _len = len
 _type = type
 
+try:
+	long(0)
+except:
+	long = int
+
 default_xid = lambda: long(random.random()*0xFFFFFFFF)
 
 def _obj(obj):
-	if isinstance(obj, str):
+	if isinstance(obj, bytes):
 		return obj
 	elif isinstance(obj, tuple):
 		return eval(obj.__class__.__name__)(*obj)
@@ -27,7 +32,7 @@ def _unpack(fmt, message, offset):
 	return struct.unpack_from(fmt, message, offset)
 
 def _align(length):
-	return (length+7)/8*8
+	return (length+7)//8*8
 
 # 7.1
 def ofp_header(version, type, length, xid):
@@ -45,7 +50,7 @@ def ofp_header(version, type, length, xid):
 
 
 def ofp_(header, data, type=None):
-	if isinstance(header, str):
+	if isinstance(header, bytes):
 		(version, oftype, length, xid) = _unpack("BBHI", header, 0)
 		if isinstance(type, int):
 			assert oftype == type
@@ -91,9 +96,9 @@ def ofp_port(port_no, length, hw_addr, name, config, state, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -145,11 +150,11 @@ def ofp_port_desc_prop_experimenter(type, length,
 	assert type == OFPPDPT_EXPERIMENTER
 	
 	if experimenter_data is None:
-		experimenter_data = ""
+		experimenter_data = b""
 	
 	length = 12 + _len(experimenter_data)
 	return _pack("HHII", type, length, experimenter, exp_type
-		) + experimenter_data + "\x00" * (align(length) - length)
+		) + experimenter_data + b"\x00" * (align(length) - length)
 
 # 7.2.2.1
 def ofp_match(type, length, oxm_fields):
@@ -161,15 +166,15 @@ def ofp_match(type, length, oxm_fields):
 	if isinstance(oxm_fields, str):
 		pass
 	elif isinstance(oxm_fields, (list, tuple)):
-		oxm_fields = "".join([_obj(f) for f in oxm_fields])
+		oxm_fields = b"".join([_obj(f) for f in oxm_fields])
 	elif oxm_fields is None:
-		oxm_fields = ""
+		oxm_fields = b""
 	else:
 		ValueError(oxm_fields)
 	
 	length = 4 + _len(oxm_fields)
 	
-	msg = _pack("HH", type, length) + oxm_fields + "\0"*(_align(length)-length)
+	msg = _pack("HH", type, length) + oxm_fields + b"\0"*(_align(length)-length)
 	assert _len(msg) % 8 == 0
 	return msg
 
@@ -208,9 +213,9 @@ def ofp_instruction_actions(type, len, actions):
 	if isinstance(actions, str):
 		pass
 	elif isinstance(actions, (tuple, list)):
-		actions = "".join([_obj(a) for a in actions])
+		actions = b"".join([_obj(a) for a in actions])
 	elif actions is None:
-		actions = ""
+		actions = b""
 	else:
 		raise ValueError(actions)
 	
@@ -364,12 +369,12 @@ def ofp_action_set_field(type, len, field):
 		type = OFPAT_SET_FIELD
 	assert type == OFPAT_SET_FIELD
 	
-	assert isinstance(field, str)
+	assert isinstance(field, bytes)
 	
 	filled_len = 4 + _len(field)
 	len = _align(filled_len)
 	
-	return _pack("HH", type, len) + field + '\0'*(len-filled_len)
+	return _pack("HH", type, len) + field + b'\0'*(len-filled_len)
 
 def ofp_action_experimenter_header(type, len, experimenter):
 	return _pack("HHI", type, len, experimenter)
@@ -384,7 +389,7 @@ def ofp_action_experimenter_(type, len, experimenter, data):
 	filled_len = 8 + _len(data)
 	len = _align(filled_len)
 	
-	return _pack("HHI", type, len, experimenter) + data + '\0'*(len-filled_len)
+	return _pack("HHI", type, len, experimenter) + data + b'\0'*(len-filled_len)
 
 # 7.3.1
 def ofp_switch_features(header, datapath_id, n_buffers, n_tables, auxiliary_id, capabilities):
@@ -431,9 +436,9 @@ def ofp_table_mod_prop_experimenter(type, length, experimenter, exp_type, experi
 	type = OFPTMPT_EXPERIMENTER
 	length = 12 + _len(experimenter_data)
 	if experimenter_data is None:
-		experimenter_data = ""
+		experimenter_data = b""
 	return _pack("HHII", type, length, experimenter, exp_type
-		) + experimenter_data + '\0'*(_align(length)-length)
+		) + experimenter_data + b'\0'*(_align(length)-length)
 
 # 7.3.4.1
 def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
@@ -444,9 +449,9 @@ def ofp_flow_mod(header, cookie, cookie_mask, table_id, command,
 	if isinstance(instructions, str):
 		pass
 	elif isinstance(instructions, (tuple,list)):
-		instructions = "".join([_obj(i) for i in instructions])
+		instructions = b"".join([_obj(i) for i in instructions])
 	elif instructions is None:
-		instructions = ""
+		instructions = b""
 	else:
 		raise ValueError(instructions)
 	
@@ -478,9 +483,9 @@ def ofp_group_mod(header, command, type, group_id, buckets):
 	if isinstance(buckets, str):
 		pass
 	elif isinstance(buckets, (list, tuple)):
-		buckets = "".join([_obj(b) for b in buckets])
+		buckets = b"".join([_obj(b) for b in buckets])
 	elif buckets is None:
-		buckets = ""
+		buckets = b""
 	else:
 		raise ValueError(buckets)
 	
@@ -493,9 +498,9 @@ def ofp_bucket(len, weight, watch_port, watch_group, actions):
 	if isinstance(actions, str):
 		pass
 	elif isinstance(actions, (list, tuple)):
-		actions = "".join([_obj(a) for a in actions])
+		actions = b"".join([_obj(a) for a in actions])
 	elif actions is None:
-		actions = ""
+		actions = b""
 	else:
 		raise ValueError(actions)
 	
@@ -506,7 +511,7 @@ def ofp_bucket(len, weight, watch_port, watch_group, actions):
 		len,
 		weight,
 		watch_port,
-		watch_group) + actions + '\0'*(len-filled_len)
+		watch_group) + actions + b'\0'*(len-filled_len)
 	return msg
 
 # 7.3.4.3
@@ -514,9 +519,9 @@ def ofp_port_mod(header, port_no, hw_addr, config, mask, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -542,18 +547,18 @@ def ofp_port_mod_prop_experimenter(type, length, experimenter, exp_type, experii
 	type = OFPPMPT_EXPERIMENTER
 	length = 12 + _len(experiimenter_data)
 	if experiimenter_data is None:
-		experiimenter_data = ""
+		experiimenter_data = b""
 	return _pack("HHII", type, length, experimenter, exp_type
-		)+experiimenter_data+'\0'*(_align(length)-length)
+		)+experiimenter_data+b'\0'*(_align(length)-length)
 
 # 7.3.4.5
 def ofp_meter_mod(header, command, flags, meter_id, bands):
 	if isinstance(bands, str):
 		pass
 	elif isinstance(bands, (list, tuple)):
-		bands = "".join([_obj(b) for b in bands])
+		bands = b"".join([_obj(b) for b in bands])
 	elif bands is None:
-		bands = ""
+		bands = b""
 	else:
 		raise ValueError(bands)
 	
@@ -622,18 +627,18 @@ def ofp_meter_band_experimenter(type, len, rate, burst_size, experimenter, data)
 def ofp_multipart_request(header, type, flags, body=None):
 	if type in (OFPMP_DESC, OFPMP_TABLE, OFPMP_GROUP_DESC, 
 			OFPMP_GROUP_FEATURES, OFPMP_METER_FEATURES, OFPMP_PORT_DESC):
-		body = ""
+		body = b""
 	elif type in (OFPMP_FLOW, OFPMP_AGGREGATE, OFPMP_PORT_STATS, 
 			OFPMP_QUEUE_STATS, OFPMP_GROUP, OFPMP_METER, OFPMP_METER_CONFIG):
 		if body is None:
-			body = ""
+			body = b""
 		else:
 			body = _obj(body)
 	elif type == OFPMP_TABLE_FEATURES:
 		if isinstance(body, str):
 			pass
 		elif isinstance(body, (list, tuple)):
-			body = "".join([_obj(b) for b in body])
+			body = b"".join([_obj(b) for b in body])
 		elif body is None:
 			body = []
 	
@@ -648,16 +653,16 @@ def ofp_multipart_reply(header, type, flags, body):
 		if isinstance(body, (tuple,str)):
 			body = _obj(body)
 		elif body is None:
-			body = ""
+			body = b""
 		else:
 			raise ValueError(body)
 	elif type in (OFPMP_FLOW, OFPMP_TABLE, OFPMP_PORT_STATS, OFPMP_QUEUE_STATS, 
 			OFPMP_GROUP, OFPMP_GROUP_DESC, OFPMP_METER, OFPMP_METER_CONFIG,
 			OFPMP_TABLE_FEATURES, OFPMP_PORT_DESC):
 		if isinstance(body, (list,tuple)):
-			body = "".join([_obj(b) for b in body])
+			body = b"".join([_obj(b) for b in body])
 		elif body is None:
-			body = ""
+			body = b""
 		else:
 			raise ValueError(body)
 	elif type == OFPMP_EXPERIMENTER:
@@ -676,15 +681,15 @@ def ofp_multipart_reply(header, type, flags, body):
 # 7.3.5.1
 def ofp_desc(mfr_desc, hw_desc, sw_desc, serial_num, dp_desc):
 	if mfr_desc is None:
-		mfr_desc = ""
+		mfr_desc = b""
 	if hw_desc is None:
-		hw_desc = ""
+		hw_desc = b""
 	if sw_desc is None:
-		sw_desc = ""
+		sw_desc = b""
 	if serial_num is None:
-		serial_num = ""
+		serial_num = b""
 	if dp_desc is None:
-		dp_desc = ""
+		dp_desc = b""
 	msg = _pack("256s256s256s32s256s",
 		mfr_desc,
 		hw_desc,
@@ -716,9 +721,9 @@ def ofp_flow_stats(length, table_id, duration_sec, duration_nsec, priority,
 		idle_timeout, hard_timeout, flags, cookie, packet_count, byte_count,
 		match, instructions):
 	if instructions is None:
-		instructions = ""
+		instructions = b""
 	elif isinstance(instructions, (list, tuple)):
-		instructions = "".join([_obj(i) for i in instructions])
+		instructions = b"".join([_obj(i) for i in instructions])
 	elif isinstance(instructions, str):
 		pass
 	else:
@@ -761,11 +766,11 @@ def ofp_table_stats(table_id, active_count, lookup_count, matched_count):
 # 7.3.5.5
 def ofp_table_desc(length, table_id, config, properties):
 	if isinstance(properties, (list,tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif isinstance(properties, str):
 		pass
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -775,11 +780,11 @@ def ofp_table_desc(length, table_id, config, properties):
 # 7.3.5.5.1
 def ofp_table_features(length, table_id, name, metadata_match, metadata_write, capabilities, max_entries, properties):
 	if isinstance(properties, (list,tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif isinstance(properties, str):
 		pass
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -796,11 +801,11 @@ def ofp_table_feature_prop_header(type, length):
 
 def ofp_table_feature_prop_instructions(type, length, instruction_ids):
 	if isinstance(instruction_ids, (list,tuple)):
-		instruction_ids = "".join([_obj(i) for i in instruction_ids])
+		instruction_ids = b"".join([_obj(i) for i in instruction_ids])
 	elif isinstance(instruction_ids, str):
 		pass
 	elif instruction_ids is None:
-		instruction_ids = ""
+		instruction_ids = b""
 	else:
 		raise ValueError(instruction_ids)
 	
@@ -808,25 +813,25 @@ def ofp_table_feature_prop_instructions(type, length, instruction_ids):
 	
 	length = 4 + _len(instruction_ids)
 	
-	return _pack("HH", type, length) + instruction_ids + '\0'*(_align(length)-length)
+	return _pack("HH", type, length) + instruction_ids + b'\0'*(_align(length)-length)
 
 def ofp_instruction_id(type, len, exp_data):
 	if type in (OFPTFPT_EXPERIMENTER, OFPTFPT_EXPERIMENTER_MISS):
 		if exp_data is None:
-			exp_data = ""
+			exp_data = b""
 	else:
-		exp_data = ""
+		exp_data = b""
 	
 	len = 4 + _len(exp_data)
 	return _pack("HH", type, len) + exp_data
 
 def ofp_table_feature_prop_tables(type, length, table_ids):
 	if isinstance(table_ids, (list,tuple)):
-		table_ids = "".join([_obj(n) for n in table_ids])
+		table_ids = b"".join([_obj(n) for n in table_ids])
 	elif isinstance(table_ids, str):
 		pass
 	elif table_ids is None:
-		table_ids = ""
+		table_ids = b""
 	else:
 		raise ValueError(table_ids)
 	
@@ -834,15 +839,15 @@ def ofp_table_feature_prop_tables(type, length, table_ids):
 	
 	length = 4 + _len(table_ids)
 	
-	return _pack("HH", type, length) + table_ids + '\0'*(_align(length)-length)
+	return _pack("HH", type, length) + table_ids + b'\0'*(_align(length)-length)
 
 def ofp_table_feature_prop_actions(type, length, action_ids):
 	if isinstance(action_ids, (list,tuple)):
-		action_ids = "".join([_obj(a) for a in action_ids])
+		action_ids = b"".join([_obj(a) for a in action_ids])
 	elif isinstance(action_ids, str):
 		pass
 	elif action_ids is None:
-		action_ids = ""
+		action_ids = b""
 	else:
 		raise ValueError(action_ids)
 	
@@ -851,14 +856,14 @@ def ofp_table_feature_prop_actions(type, length, action_ids):
 	
 	length = 4 + _len(action_ids)
 	
-	return _pack("HH", type, length) + action_ids + '\0'*(_align(length)-length)
+	return _pack("HH", type, length) + action_ids + b'\0'*(_align(length)-length)
 
 def ofp_action_id(type, len, exp_data):
 	if type == OFPAT_EXPERIMENTER:
 		if exp_data is None:
-			exp_data = ""
+			exp_data = b""
 	else:
-		exp_data = ""
+		exp_data = b""
 	
 	len = 4 + _len(exp_data)
 	return _pack("HH", type, len) + exp_data
@@ -869,7 +874,7 @@ def ofp_table_feature_prop_oxm(type, length, oxm_ids):
 	elif isinstance(oxm_ids, str):
 		pass
 	elif oxm_ids is None:
-		oxm_ids = ""
+		oxm_ids = b""
 	else:
 		raise ValueError(oxm_ids)
 	
@@ -878,7 +883,7 @@ def ofp_table_feature_prop_oxm(type, length, oxm_ids):
 	
 	length = 4 + _len(oxm_ids)
 	
-	return _pack("HH", type, length) + oxm_ids + '\0'*(_align(length)-length)
+	return _pack("HH", type, length) + oxm_ids + b'\0'*(_align(length)-length)
 
 def ofp_table_feature_prop_experimenter(type, length, experimenter, exp_type, data):
 	assert isinsntace(data, str)
@@ -899,11 +904,11 @@ def ofp_port_stats(length, port_no, duration_sec, duration_nsec,
 		rx_packets, tx_packets, rx_bytes, tx_bytes, rx_dropped, tx_dropped,
 		rx_errors, tx_errors, properties):
 	if isinstance(properties, (list,tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif isinstance(properties, str):
 		pass
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -938,7 +943,7 @@ def ofp_port_stats_prop_experimenter(type, length,
 		experimenter, exp_type, experimenter_data):
 	type = OFPPSPT_EXPERIMENTER
 	if experimenter_data is None:
-		experimenter_data = ""
+		experimenter_data = b""
 	length = 12 + _len(experimenter_data)
 	return _pack("HHII", type, length,
 		experimenter, exp_type) + experimenter_data
@@ -955,9 +960,9 @@ def ofp_queue_stats(length, port_no, queue_id, tx_bytes, tx_packets, tx_errors, 
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -971,7 +976,7 @@ def ofp_queue_stats_prop_header(type, length):
 def ofp_queue_stats_prop_experimenter(type, length, experimenter, exp_type, experimenter_data):
 	type = OFPQSPT_EXPERIMENTER
 	length = 12 + _len(experimenter_data)
-	return _pack("HHII", type, length, experimenter, exp_type) + experimenter_data + '\0'*(_align(length)-length)
+	return _pack("HHII", type, length, experimenter, exp_type) + experimenter_data + b'\0'*(_align(length)-length)
 
 # 7.3.5.10
 def ofp_queue_desc_request(port_no, queue_id):
@@ -985,9 +990,9 @@ def ofp_queue_desc(port_no, queue_id, len, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -1018,7 +1023,7 @@ def ofp_queue_desc_prop_experimenter(type, length, experimenter, exp_type, exper
 	type = OFPQDPT_EXPERIMENTER
 	length = 12 + _len(data)
 	return _pack("HHII", type, length, experimenter, exp_type
-		) + experimenter_data + '\0'*(_align(length)-length)
+		) + experimenter_data + b'\0'*(_align(length)-length)
 
 # 7.3.5.9
 def ofp_group_stats_request(group_id):
@@ -1029,11 +1034,11 @@ def ofp_group_stats_request(group_id):
 def ofp_group_stats(length, group_id, ref_count, packet_count, byte_count,
 		duration_sec, duration_nsec, bucket_stats):
 	if isinstance(bucket_stats, (list,tuple)):
-		bucket_stats = "".join([_obj(b) for b in bucket_stats])
+		bucket_stats = b"".join([_obj(b) for b in bucket_stats])
 	elif isinstance(bucket_stats, str):
 		pass
 	elif bucket_stats is None:
-		bucket_stats = ""
+		bucket_stats = b""
 	else:
 		raise ValueError(bucket_stats)
 	
@@ -1048,11 +1053,11 @@ def ofp_bucket_counter(packet_count, byte_count):
 # 7.3.5.10
 def ofp_group_desc(length, type, group_id, buckets):
 	if isinstance(buckets, (list,tuple)):
-		buckets = "".join([_obj(b) for b in buckets])
+		buckets = b"".join([_obj(b) for b in buckets])
 	elif isinstance(buckets, str):
 		pass
 	elif buckets is None:
-		buckets = ""
+		buckets = b""
 	else:
 		raise ValueError(buckets)
 	
@@ -1067,7 +1072,7 @@ def ofp_group_features(types, capabilities, max_groups, actions):
 	elif isinstance(max_groups, str):
 		assert len(max_groups) == 16
 	elif max_groups is None:
-		max_groups = '\0'*16
+		max_groups = b'\0'*16
 	else:
 		raise ValueError(max_groups)
 	
@@ -1076,7 +1081,7 @@ def ofp_group_features(types, capabilities, max_groups, actions):
 	elif isinstance(actions, str):
 		assert len(actions) == 16
 	elif actions is None:
-		actions = '\0'*16
+		actions = b'\0'*16
 	else:
 		raise ValueError(actions)
 	
@@ -1089,11 +1094,11 @@ def ofp_meter_multipart_request(meter_id):
 def ofp_meter_stats(meter_id, len, flow_count, packet_in_count, byte_in_count,
 		duration_sec, duration_nsec, band_stats):
 	if isinstance(band_stats, (list, tuple)):
-		band_stats = "".join([_obj(b) for b in band_stats])
+		band_stats = b"".join([_obj(b) for b in band_stats])
 	elif isinstance(band_stats, str):
 		pass
 	elif band_stats is None:
-		band_stats = ""
+		band_stats = b""
 	else:
 		raise ValueError(band_stats)
 	
@@ -1106,11 +1111,11 @@ def ofp_meter_band_stats(packet_band_count, byte_band_count):
 # 7.3.5.13
 def ofp_meter_config(length, flags, meter_id, bands):
 	if isinstance(bands, (list,tuple)):
-		bands = "".join([_obj(b) for b in bands])
+		bands = b"".join([_obj(b) for b in bands])
 	elif isinstance(bands, str):
 		pass
 	elif bands is None:
-		bands = ""
+		bands = b""
 	else:
 		raise ValueError(bands)
 	
@@ -1135,9 +1140,9 @@ def ofp_flow_update_full(length, event, table_id, reason,
 	if isinstance(instructions, str):
 		pass
 	elif isinstance(instructions, (list, tuple)):
-		instructions = "".join([_obj(p) for p in instructions])
+		instructions = b"".join([_obj(p) for p in instructions])
 	elif instructions is None:
-		instructions = ""
+		instructions = b""
 	else:
 		raise ValueError(instructions)
 	
@@ -1162,18 +1167,18 @@ def ofp_experimenter_multipart_header(experimenter, exp_type):
 # 7.3.7
 def ofp_packet_out(header, buffer_id, in_port, actions_len, actions, data):
 	if isinstance(actions, (list,tuple)):
-		actions = "".join([_obj(a) for a in actions])
+		actions = b"".join([_obj(a) for a in actions])
 	elif isinstance(actions, str):
 		pass
 	elif actions is None:
-		actions = ""
+		actions = b""
 	else:
 		raise ValueError(actions)
 	
 	if isinstance(data, str):
 		pass
 	elif data is None:
-		data = ""
+		data = b""
 	else:
 		raise ValueError(data)
 	
@@ -1197,9 +1202,9 @@ def ofp_bundle_ctrl_msg(header, bundle_id, type, flags, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -1212,9 +1217,9 @@ def ofp_bundle_add_msg(header, bundle_id, flags, message, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -1232,16 +1237,16 @@ def ofp_bundle_prop_experimenter(type, length,
 	length = 12 + _len(experimenter_data)
 	
 	return _pack("HHII", type, length, experimenter, exp_type
-		)+experimenter_data+'\0'*(_align(length)-length)
+		)+experimenter_data+b'\0'*(_align(length)-length)
 
 # 7.3.10
 def ofp_async_config(header, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -1267,12 +1272,12 @@ def ofp_async_config_prop_experimenter(type, length,
 	assert type in (OFPACPT_EXPERIIMENTER_SLAVE, OFPACPT_EXPERIMENTER_MASTER)
 	length = 12 + _len(experimenter_data)
 	return _pack("HHII", type, length, experimenter, exp_type
-		)+experimenter_data+'\0'*(_align(length)-length)
+		)+experimenter_data+b'\0'*(_align(length)-length)
 
 # 7.4.1
 def ofp_packet_in(header, buffer_id, total_len, reason, table_id, cookie, match, data):
 	return ofp_(header,
-		_pack("IHBBQ", buffer_id, total_len, reason, table_id, cookie) + _obj(match) + "\0"*2 + data,
+		_pack("IHBBQ", buffer_id, total_len, reason, table_id, cookie) + _obj(match) + b"\0"*2 + data,
 		OFPT_PACKET_IN)
 
 # 7.4.2
@@ -1296,9 +1301,9 @@ def ofp_role_status(header, role, reason, generation_id, properties):
 	if isinstance(properties, str):
 		pass
 	elif isinstance(properties, (list, tuple)):
-		properties = "".join([_obj(p) for p in properties])
+		properties = b"".join([_obj(p) for p in properties])
 	elif properties is None:
-		properties = ""
+		properties = b""
 	else:
 		raise ValueError(properties)
 	
@@ -1312,10 +1317,10 @@ def ofp_role_prop_header(type, length):
 def ofp_role_prop_experimenter(type, length, experimenter, exp_type, experimenter_data):
 	type = OFPRPT_EXPERIMENTER
 	if experimenter_data is None:
-		experimenter_data = ""
+		experimenter_data = b""
 	length = 12 + _len(experimenter_data)
 	return _pack("HHII", type, length, experimenter, exp_type
-		) + experimenter_data + '\0'*(_align(length)-length)
+		) + experimenter_data + b'\0'*(_align(length)-length)
 
 # 7.4.5
 def ofp_table_status(header, reason, table):
@@ -1334,9 +1339,9 @@ def ofp_hello(header, elements):
 	if isinstance(elements, str):
 		pass
 	elif isinstance(elements, (tuple, list)):
-		elements = "".join([_obj(e) for e in elements])
+		elements = b"".join([_obj(e) for e in elements])
 	elif elements is None:
-		elements = ""
+		elements = b""
 	else:
 		raise ValueError(elements)
 	
@@ -1353,20 +1358,20 @@ def ofp_hello_elem_versionbitmap(type, length, bitmaps):
 	if isinstance(bitmaps, str):
 		pass
 	elif isinstance(bitmaps, (tuple, list)):
-		bitmaps = "".join([_pack("I",e) for e in bitmaps])
+		bitmaps = b"".join([_pack("I",e) for e in bitmaps])
 	elif bitmaps is None:
-		bitmaps = ""
+		bitmaps = b""
 	else:
 		raise ValueError("%s" % bitmaps)
 	
 	length = 4 + _len(bitmaps)
 	
-	return struct.pack("!HH", type, length) + bitmaps + '\0'*(_align(length)-length)
+	return struct.pack("!HH", type, length) + bitmaps + b'\0'*(_align(length)-length)
 
 # 7.5.4
 def ofp_error_msg(header, type, code, data):
 	if data is None:
-		data = ""
+		data = b""
 	return ofp_(header,
 		_pack("HH", type, code)+data,
 		OFPT_ERROR)
@@ -1380,7 +1385,7 @@ def ofp_error_experimenter_msg(header, type, exp_code, experimenter, data):
 # 7.5.5
 def ofp_experimenter_msg(header, experimenter, exp_type, experimenter_data):
 	if experimenter_data is None:
-		experimenter_data = ""
+		experimenter_data = b""
 	return ofp_(header,
 		_pack("II", experimenter, exp_type) + experimenter_data,
 		OFPT_EXPERIMENTER)
